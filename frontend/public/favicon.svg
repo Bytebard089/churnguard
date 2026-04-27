@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Background rounded square, dark -->
+  <rect width="32" height="32" rx="7" fill="#111318"/>
+  <!-- Shield shape in amber -->
+  <path d="M16 5 L26 9 L26 17 C26 22.5 21.5 27 16 28 C10.5 27 6 22.5 6 17 L6 9 Z"
+        fill="#f59e0b"/>
+  <!-- Shield inner highlight -->
+  <path d="M16 8 L23 11.5 L23 17 C23 21 19.5 24.5 16 25.5 C12.5 24.5 9 21 9 17 L9 11.5 Z"
+        fill="#0a0b0e" opacity="0.35"/>
+  <!-- Checkmark / lock icon in center -->
+  <path d="M12.5 16.5 L14.5 18.5 L19.5 13.5"
+        stroke="#0a0b0e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

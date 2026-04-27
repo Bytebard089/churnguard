@@ -1,0 +1,92 @@
+
+> churnguard-frontend@1.0.0 build
+> vite build
+
+vite v5.4.21 building for production...
+transforming...
+✓ 6 modules transformed.
+x Build failed in 56ms
+error during build:
+[vite:esbuild] Transform failed with 8 errors:
+/Users/ishatomar/Downloads/churnguard_v2/frontend/src/pages/PredictPage.jsx:54:7: ERROR: The symbol "React" has already been declared
+/Users/ishatomar/Downloads/churnguard_v2/frontend/src/pages/PredictPage.jsx:54:16: ERROR: The symbol "useState" has already been declared
+/Users/ishatomar/Downloads/churnguard_v2/frontend/src/pages/PredictPage.jsx:54:26: ERROR: The symbol "useEffect" has already been declared
+/Users/ishatomar/Downloads/churnguard_v2/frontend/src/pages/PredictPage.jsx:56:7: ERROR: The symbol "CustomerForm" has already been declared
+/Users/ishatomar/Downloads/churnguard_v2/frontend/src/pages/PredictPage.jsx:57:7: ERROR: The symbol "PredictionResult" has already been declared
+...
+file: /Users/ishatomar/Downloads/churnguard_v2/frontend/src/pages/PredictPage.jsx:54:7
+
+The symbol "React" has already been declared
+52 |  // Left panel: form. Right panel: result.
+53 |  
+54 |  import React, { useState, useEffect } from 'react'
+   |         ^
+55 |  import { Zap, RefreshCw } from 'lucide-react'
+56 |  import CustomerForm from '../components/CustomerForm'
+
+The symbol "useState" has already been declared
+52 |  // Left panel: form. Right panel: result.
+53 |  
+54 |  import React, { useState, useEffect } from 'react'
+   |                  ^
+55 |  import { Zap, RefreshCw } from 'lucide-react'
+56 |  import CustomerForm from '../components/CustomerForm'
+
+The symbol "useEffect" has already been declared
+52 |  // Left panel: form. Right panel: result.
+53 |  
+54 |  import React, { useState, useEffect } from 'react'
+   |                            ^
+55 |  import { Zap, RefreshCw } from 'lucide-react'
+56 |  import CustomerForm from '../components/CustomerForm'
+
+The symbol "CustomerForm" has already been declared
+54 |  import React, { useState, useEffect } from 'react'
+55 |  import { Zap, RefreshCw } from 'lucide-react'
+56 |  import CustomerForm from '../components/CustomerForm'
+   |         ^
+57 |  import PredictionResult from '../components/PredictionResult'
+58 |  import { Card, SectionTitle, Button, ErrorBox, Spinner } from '../components/ui'
+
+The symbol "PredictionResult" has already been declared
+55 |  import { Zap, RefreshCw } from 'lucide-react'
+56 |  import CustomerForm from '../components/CustomerForm'
+57 |  import PredictionResult from '../components/PredictionResult'
+   |         ^
+58 |  import { Card, SectionTitle, Button, ErrorBox, Spinner } from '../components/ui'
+59 |  import { useApi } from '../hooks/useApi'
+
+The symbol "getSample" has already been declared
+58 |  import { Card, SectionTitle, Button, ErrorBox, Spinner } from '../components/ui'
+59 |  import { useApi } from '../hooks/useApi'
+60 |  import { predict as defaultPredict, getSample, getFeatures } from '../api/client'
+   |                                      ^
+61 |  
+62 |  export default function PredictPage({ predictFn }) {
+
+Multiple exports with the same name "default"
+60 |  import { predict as defaultPredict, getSample, getFeatures } from '../api/client'
+61 |  
+62 |  export default function PredictPage({ predictFn }) {
+   |         ^
+63 |    // Use injected fn (tracks history) or fallback to direct API call
+64 |    const predictCall = predictFn || defaultPredict
+
+The symbol "PredictPage" has already been declared
+60 |  import { predict as defaultPredict, getSample, getFeatures } from '../api/client'
+61 |  
+62 |  export default function PredictPage({ predictFn }) {
+   |                          ^
+63 |    // Use injected fn (tracks history) or fallback to direct API call
+64 |    const predictCall = predictFn || defaultPredict
+
+    at failureErrorWithLog (/Users/ishatomar/Downloads/churnguard_v2/frontend/node_modules/esbuild/lib/main.js:1472:15)
+    at /Users/ishatomar/Downloads/churnguard_v2/frontend/node_modules/esbuild/lib/main.js:755:50
+    at responseCallbacks.<computed> (/Users/ishatomar/Downloads/churnguard_v2/frontend/node_modules/esbuild/lib/main.js:622:9)
+    at handleIncomingPacket (/Users/ishatomar/Downloads/churnguard_v2/frontend/node_modules/esbuild/lib/main.js:677:12)
+    at Socket.readFromStdout (/Users/ishatomar/Downloads/churnguard_v2/frontend/node_modules/esbuild/lib/main.js:600:7)
+    at Socket.emit (node:events:519:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5)
+    at Pipe.onStreamRead (node:internal/stream_base_commons:189:23)

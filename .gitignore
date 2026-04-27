@@ -1,0 +1,10 @@
+*.pkl
+*.joblib
+__pycache__/
+*.py[cod]
+.env
+venv/
+node_modules/
+frontend/dist/
+*.log
+.DS_Store
