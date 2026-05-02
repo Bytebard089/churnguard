@@ -16,7 +16,7 @@ function FormField({ field, value, onChange }) {
         min={field.min}
         max={field.max}
         step={field.field === 'tenure' ? 1 : 0.01}
-        value={values[field.field] ?? field.default ?? ''}
+        value={value ?? field.default ?? ''}
         onChange={e => {
           const raw = e.target.value
           onChange(field.field, raw === '' ? '' : Number(raw))
@@ -27,7 +27,7 @@ function FormField({ field, value, onChange }) {
 
   if (field.type === 'select') {
     return (
-      <select value={values[field.field] ?? field.default ?? ''} onChange={e => {
+      <select value={value ?? field.default ?? ''} onChange={e => {
         // SeniorCitizen is 0/1 integer
         let v = e.target.value
         if (Array.isArray(field.options) && typeof field.options[0] === 'number') {

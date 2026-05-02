@@ -46,6 +46,15 @@ export async function getSample() {
 }
 
 /**
+ * Fetch dynamic form field definitions.
+ * @returns {Promise<Object[]>} Field definition list
+ */
+export async function getFeatures() {
+  const { data } = await axiosInstance.get('/features')
+  return data
+}
+
+/**
  * Predict churn probability for a single customer.
  * @param {Object} customer Raw CustomerInput fields
  * @returns {Promise<Object>} PredictionResponse

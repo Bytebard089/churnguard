@@ -224,7 +224,8 @@ class TestDashboard:
     def test_dashboard_risk_distribution_sums(self, client):
         data = client.get("/dashboard").json()
         rd = data["risk_distribution"]
-        assert rd["high"] + rd["medium"] + rd["low"] == 1000  # sim population
+        assert rd["high"] + rd["medium"] + rd["" \
+        "low"] == 1000  # sim population
 
     def test_dashboard_fold_metrics_count(self, client):
         data = client.get("/dashboard").json()

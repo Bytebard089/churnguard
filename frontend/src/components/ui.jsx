@@ -244,3 +244,25 @@ export function StatPill({ label, value, color = 'var(--accent)' }) {
     </div>
   )
 }
+
+/* ─── StatCell ─────────────────────────────────────────────────────────────── */
+export function StatCell({ label, value }) {
+  return (
+    <div style={{
+      background: 'var(--bg-elevated)',
+      border: '1px solid var(--border)',
+      borderRadius: 'var(--radius-md)',
+      padding: '0.5rem 0.75rem',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '0.15rem',
+    }}>
+      <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+        {label}
+      </span>
+      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--text-primary)' }}>
+        {value}
+      </span>
+    </div>
+  )
+}

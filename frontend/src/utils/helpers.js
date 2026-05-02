@@ -42,3 +42,35 @@ export function clamp(val, min, max) {
 export function truncate(str, len = 40) {
   return str.length > len ? str.slice(0, len) + '…' : str
 }
+
+/**
+ * Group array items by key selector.
+ * @template T
+ * @param {T[]} items
+ * @param {(item: T) => string} getKey
+ * @returns {Record<string, T[]>}
+ */
+export function groupBy(items, getKey) {
+  return items.reduce((acc, item) => {
+    const key = getKey(item)
+    if (!acc[key]) acc[key] = []
+    acc[key].push(item)
+    return acc
+  }, {})
+}
+
+/**
+ * Trigger a download for a Blob in the browser.
+ * @param {Blob} blob
+ * @param {string} filename
+ */
+export function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
