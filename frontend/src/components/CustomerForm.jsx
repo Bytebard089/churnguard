@@ -16,7 +16,7 @@ function FormField({ field, value, onChange }) {
         min={field.min}
         max={field.max}
         step={field.field === 'tenure' ? 1 : 0.01}
-        value={value ?? field.default ?? ''}
+        value={values[field.field] ?? field.default ?? ''}
         onChange={e => {
           const raw = e.target.value
           onChange(field.field, raw === '' ? '' : Number(raw))
@@ -27,10 +27,10 @@ function FormField({ field, value, onChange }) {
 
   if (field.type === 'select') {
     return (
-      <select value={value ?? field.default ?? ''} onChange={e => {
+      <select value={values[field.field] ?? field.default ?? ''} onChange={e => {
         // SeniorCitizen is 0/1 integer
         let v = e.target.value
-        if (field.options && field.options[0] !== null && typeof field.options[0] === 'number') {
+        if (Array.isArray(field.options) && typeof field.options[0] === 'number') {
           v = Number(v)
         }
         onChange(field.field, v)
@@ -104,7 +104,7 @@ export default function CustomerForm({ fields, values, onChange }) {
                   </label>
                   <FormField
                     field={field}
-                    value={values[field.field]}
+                    value={values[field.field] ?? field.default ?? ''}
                     onChange={onChange}
                   />
                 </div>
