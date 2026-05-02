@@ -1,59 +1,110 @@
 // src/api/client.js
-// All API calls to the ChurnGuard backend go through here.
-// The Vite proxy rewrites /api -> http://localhost:8000
+// Centralised API client for ChurnGuard frontend.
+// All requests go through axiosInstance so the base URL is set once.
 
-const BASE_URL = import.meta.env.VITE_API_URL || '/api'
+import axios from 'axios'
 
-async function request(method, path, body = null, isForm = false) {
-  const options = {
-    method,
-    headers: isForm ? {} : { 'Content-Type': 'application/json' },
+const BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  'https://churnguard-api.onrender.com'
+
+const axiosInstance = axios.create({
+  baseURL: BASE_URL,
+  timeout: 30_000,
+  headers: { 'Content-Type': 'application/json' },
+})
+
+// ─── request interceptor: log in dev ─────────────────────────────────────────
+axiosInstance.interceptors.request.use((config) => {
+  if (import.meta.env.DEV) {
+    console.debug(`[API] ${config.method?.toUpperCase()} ${config.url}`, config.data ?? '')
   }
+  return config
+})
 
-  if (body) {
-    options.body = isForm ? body : JSON.stringify(body)
-  }
+// ─── response interceptor: normalise errors ───────────────────────────────────
+axiosInstance.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    const msg =
+      err.response?.data?.detail ||
+      err.message ||
+      'Unknown API error'
+    return Promise.reject(new Error(msg))
+  },
+)
 
-  const res = await fetch(`${BASE_URL}${path}`, options)
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(err.detail || `HTTP ${res.status}`)
-  }
+// ─── API methods ─────────────────────────────────────────────────────────────
 
-  return res
-}
-
-export async function getHealth() {
-  const res = await request('GET', '/health')
-  return res.json()
-}
-
+/**
+ * Fetch a sample customer input for demo / auto-fill.
+ * @returns {Promise<Object>} Raw customer fields
+ */
 export async function getSample() {
-  const res = await request('GET', '/sample')
-  return res.json()
+  const { data } = await axiosInstance.get('/sample')
+  return data
 }
 
-export async function getFeatures() {
-  const res = await request('GET', '/features')
-  return res.json()
+/**
+ * Predict churn probability for a single customer.
+ * @param {Object} customer Raw CustomerInput fields
+ * @returns {Promise<Object>} PredictionResponse
+ */
+export async function predict(customer) {
+  const { data } = await axiosInstance.post('/predict', customer)
+  return data
 }
 
-export async function predict(customerData) {
-  const res = await request('POST', '/predict', customerData)
-  return res.json()
+/**
+ * Run a what-if simulation — compare original vs modified customer.
+ * @param {Object} base      Original customer record
+ * @param {Object} overrides Fields to change
+ * @returns {Promise<Object>} WhatIfResponse
+ */
+export async function whatif(base, overrides) {
+  const { data } = await axiosInstance.post(
+    '/whatif',
+    { ...base },
+    { params: overrides },       // overrides sent as query params
+  )
+  return data
 }
 
-export async function whatif(customerData, overrides) {
-  const res = await request('POST', '/whatif', {
-    customer: customerData,
-    overrides,
+/**
+ * POST /whatif with overrides in request body (alternative approach).
+ * Used when overrides object is complex.
+ */
+export async function whatifPost(base, overrides) {
+  const { data } = await axiosInstance.post('/whatif', base, {
+    params: overrides,
   })
-  return res.json()
+  return data
 }
 
-export async function batchPredict(csvFile) {
-  const form = new FormData()
-  form.append('file', csvFile)
-  const res = await request('POST', '/batch', form, true)
-  return res.blob()
+/**
+ * Score a batch of customers.
+ * @param {Object[]} customers Array of CustomerInput objects
+ * @returns {Promise<Object>} BatchResponse
+ */
+export async function batchPredict(customers) {
+  const { data } = await axiosInstance.post('/batch', { customers })
+  return data
+}
+
+/**
+ * Fetch dashboard analytics (model metrics, risk distribution, feature importance).
+ * @returns {Promise<Object>} Dashboard data
+ */
+export async function getDashboard() {
+  const { data } = await axiosInstance.get('/dashboard')
+  return data
+}
+
+/**
+ * Health check — useful for showing backend status in UI.
+ * @returns {Promise<Object>} Health response
+ */
+export async function getHealth() {
+  const { data } = await axiosInstance.get('/health')
+  return data
 }
