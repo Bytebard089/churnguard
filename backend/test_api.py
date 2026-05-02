@@ -1,38 +1,33 @@
 """
-churnguard/backend/test_api.py
+tests/test_api.py
+=================
+Pytest test suite for ChurnGuard API.
 
-Run this to verify every API endpoint works before moving to the frontend.
+Run with:
+    pytest tests/ -v
 
-Usage:
-  # In one terminal — start the server:
-  python main.py
-
-  # In another terminal — run tests:
-  python test_api.py
+Requires the backend to be importable (run from `backend/` directory).
+Uses FastAPI's TestClient — no live server needed.
 """
 
 import json
-import sys
-import time
-import requests
+import pytest
+from fastapi.testclient import TestClient
 
-BASE = "http://localhost:8000"
-
-PASS = "  ✓"
-FAIL = "  ✗"
-
-# ── Sample customer — typical high-risk profile ───────────────────────────────
-SAMPLE = {
-    "gender": "Female",
-    "SeniorCitizen": 0,
+# ── sample payload ──────────────────────────────────────────────────────────
+SAMPLE_CUSTOMER = {
+    "tenure": 24,
+    "MonthlyCharges": 79.5,
+    "TotalCharges": 1908.0,
+    "gender": "Male",
+    "SeniorCitizen": "No",
     "Partner": "Yes",
     "Dependents": "No",
-    "tenure": 8,
     "PhoneService": "Yes",
     "MultipleLines": "No",
     "InternetService": "Fiber optic",
     "OnlineSecurity": "No",
-    "OnlineBackup": "No",
+    "OnlineBackup": "Yes",
     "DeviceProtection": "No",
     "TechSupport": "No",
     "StreamingTV": "Yes",
@@ -40,154 +35,198 @@ SAMPLE = {
     "Contract": "Month-to-month",
     "PaperlessBilling": "Yes",
     "PaymentMethod": "Electronic check",
-    "MonthlyCharges": 84.45,
-    "TotalCharges": 673.45,
 }
 
-LOW_RISK = {
-    **SAMPLE,
-    "tenure": 60,
-    "Contract": "Two year",
-    "PaymentMethod": "Bank transfer (automatic)",
-    "PaperlessBilling": "No",
-    "MonthlyCharges": 45.0,
-    "TotalCharges": 2700.0,
-}
 
-errors = []
-
-def check(label, condition, detail=""):
-    if condition:
-        print(f"{PASS}  {label}")
-    else:
-        print(f"{FAIL}  {label}  ← {detail}")
-        errors.append(label)
+@pytest.fixture(scope="module")
+def client():
+    """Create a TestClient with the FastAPI app."""
+    from main import app
+    with TestClient(app) as c:
+        yield c
 
 
-# ── Test 1: Health ────────────────────────────────────────────────────────────
-print("\n── GET /health ──────────────────────────────────────────────────")
-r = requests.get(f"{BASE}/health")
-check("Status 200",          r.status_code == 200)
-data = r.json()
-check("Has 'status' key",    "status" in data)
-check("Models loaded > 0",   data.get("models_loaded", 0) > 0,
-      "Are model files in backend/models/?")
-print(f"     models={data.get('models_loaded')}  features={data.get('n_features')}  oof_auc={data.get('oof_auc')}")
+# ── /health ──────────────────────────────────────────────────────────────────
+
+class TestHealth:
+    def test_health_returns_200(self, client):
+        res = client.get("/health")
+        assert res.status_code == 200
+
+    def test_health_contains_models_loaded(self, client):
+        data = client.get("/health").json()
+        assert "models_loaded" in data
+        assert data["models_loaded"] == 5
+
+    def test_health_contains_oof_auc(self, client):
+        data = client.get("/health").json()
+        assert "oof_auc" in data
+        assert 0.7 < data["oof_auc"] < 1.0
 
 
-# ── Test 2: Sample endpoint ───────────────────────────────────────────────────
-print("\n── GET /sample ──────────────────────────────────────────────────")
-r = requests.get(f"{BASE}/sample")
-check("Status 200",          r.status_code == 200)
-sample = r.json()
-check("Has 'tenure' key",    "tenure" in sample)
-check("Has 'Contract' key",  "Contract" in sample)
+# ── /sample ──────────────────────────────────────────────────────────────────
+
+class TestSample:
+    def test_sample_returns_200(self, client):
+        res = client.get("/sample")
+        assert res.status_code == 200
+
+    def test_sample_has_required_fields(self, client):
+        data = client.get("/sample").json()
+        required = ["tenure", "MonthlyCharges", "Contract", "InternetService"]
+        for field in required:
+            assert field in data, f"Missing field: {field}"
 
 
-# ── Test 3: Features endpoint ─────────────────────────────────────────────────
-print("\n── GET /features ────────────────────────────────────────────────")
-r = requests.get(f"{BASE}/features")
-check("Status 200",          r.status_code == 200)
-features = r.json()
-check("Returns list",        isinstance(features, list))
-check("Has ≥ 10 fields",     len(features) >= 10, f"got {len(features)}")
+# ── /predict ─────────────────────────────────────────────────────────────────
+
+class TestPredict:
+    def test_predict_returns_200(self, client):
+        res = client.post("/predict", json=SAMPLE_CUSTOMER)
+        assert res.status_code == 200, res.text
+
+    def test_predict_probability_in_range(self, client):
+        data = client.post("/predict", json=SAMPLE_CUSTOMER).json()
+        prob = data["churn_probability"]
+        assert 0.0 <= prob <= 1.0
+
+    def test_predict_risk_tier_valid(self, client):
+        data = client.post("/predict", json=SAMPLE_CUSTOMER).json()
+        assert data["risk_tier"] in {"High", "Medium", "Low"}
+
+    def test_predict_churn_prediction_is_bool(self, client):
+        data = client.post("/predict", json=SAMPLE_CUSTOMER).json()
+        assert isinstance(data["churn_prediction"], bool)
+
+    def test_predict_shap_features_present(self, client):
+        data = client.post("/predict", json=SAMPLE_CUSTOMER).json()
+        assert isinstance(data["shap_top_features"], list)
+        assert len(data["shap_top_features"]) > 0
+
+    def test_predict_latency_ms_positive(self, client):
+        data = client.post("/predict", json=SAMPLE_CUSTOMER).json()
+        assert data["latency_ms"] > 0
+
+    def test_predict_invalid_gender_returns_422(self, client):
+        bad = {**SAMPLE_CUSTOMER, "gender": "Unknown"}
+        res = client.post("/predict", json=bad)
+        assert res.status_code == 422
+
+    def test_predict_invalid_contract_returns_422(self, client):
+        bad = {**SAMPLE_CUSTOMER, "Contract": "Weekly"}
+        res = client.post("/predict", json=bad)
+        assert res.status_code == 422
+
+    def test_predict_negative_tenure_returns_422(self, client):
+        bad = {**SAMPLE_CUSTOMER, "tenure": -5}
+        res = client.post("/predict", json=bad)
+        assert res.status_code == 422
 
 
-# ── Test 4: Predict — high-risk customer ──────────────────────────────────────
-print("\n── POST /predict (high-risk customer) ───────────────────────────")
-r = requests.post(f"{BASE}/predict", json=SAMPLE)
-check("Status 200",                    r.status_code == 200, r.text[:200])
-pred = r.json()
-check("Has churn_probability",         "churn_probability" in pred)
-check("Probability in [0,1]",          0 <= pred.get("churn_probability", -1) <= 1)
-check("Has risk_tier",                 pred.get("risk_tier") in ["High", "Medium", "Low"])
-check("Has shap_values (list)",        isinstance(pred.get("shap_values"), list))
-check("SHAP has ≥ 5 entries",          len(pred.get("shap_values", [])) >= 5)
-check("SHAP entry has 'feature' key",  "feature" in pred["shap_values"][0])
-check("SHAP entry has 'impact' key",   "impact"  in pred["shap_values"][0])
-check("Has fold_probabilities",        len(pred.get("fold_probabilities", [])) == 5,
-      f"got {len(pred.get('fold_probabilities', []))}")
-check("Has latency_ms",                "latency_ms" in pred)
-print(f"     prob={pred.get('churn_probability')}  tier={pred.get('risk_tier')}  conf={pred.get('confidence')}  {pred.get('latency_ms')}ms")
-print(f"     Top SHAP driver: {pred['shap_values'][0].get('feature')}  impact={pred['shap_values'][0].get('impact')}")
+# ── /whatif ──────────────────────────────────────────────────────────────────
+
+class TestWhatIf:
+    def test_whatif_returns_200(self, client):
+        res = client.post(
+            "/whatif",
+            json=SAMPLE_CUSTOMER,
+            params={"Contract": "Two year"},
+        )
+        assert res.status_code == 200, res.text
+
+    def test_whatif_probabilities_differ(self, client):
+        data = client.post(
+            "/whatif",
+            json=SAMPLE_CUSTOMER,
+            params={"Contract": "Two year"},
+        ).json()
+        # Upgrading contract should lower probability for a high-risk customer
+        assert data["original_probability"] != data["modified_probability"]
+
+    def test_whatif_contract_upgrade_lowers_risk(self, client):
+        data = client.post(
+            "/whatif",
+            json=SAMPLE_CUSTOMER,
+            params={"Contract": "Two year"},
+        ).json()
+        assert data["modified_probability"] < data["original_probability"]
+
+    def test_whatif_overrides_in_response(self, client):
+        data = client.post(
+            "/whatif",
+            json=SAMPLE_CUSTOMER,
+            params={"Contract": "Two year"},
+        ).json()
+        assert "overrides" in data
+
+    def test_whatif_tiers_are_valid(self, client):
+        data = client.post(
+            "/whatif",
+            json=SAMPLE_CUSTOMER,
+            params={"Contract": "Two year"},
+        ).json()
+        assert data["original_risk_tier"] in {"High", "Medium", "Low"}
+        assert data["modified_risk_tier"] in {"High", "Medium", "Low"}
 
 
-# ── Test 5: Predict — low-risk customer ───────────────────────────────────────
-print("\n── POST /predict (low-risk customer) ────────────────────────────")
-r = requests.post(f"{BASE}/predict", json=LOW_RISK)
-check("Status 200",         r.status_code == 200)
-pred_low = r.json()
-check("Probability < high-risk",
-      pred_low.get("churn_probability", 1) < pred.get("churn_probability", 0),
-      f"low={pred_low.get('churn_probability')} vs high={pred.get('churn_probability')}")
-print(f"     prob={pred_low.get('churn_probability')}  tier={pred_low.get('risk_tier')}")
+# ── /batch ───────────────────────────────────────────────────────────────────
+
+class TestBatch:
+    def test_batch_single_customer(self, client):
+        res = client.post("/batch", json={"customers": [SAMPLE_CUSTOMER]})
+        assert res.status_code == 200, res.text
+
+    def test_batch_multiple_customers(self, client):
+        res = client.post("/batch", json={"customers": [SAMPLE_CUSTOMER] * 5})
+        data = res.json()
+        assert data["summary"]["total"] == 5
+
+    def test_batch_results_count_matches(self, client):
+        n = 10
+        res = client.post("/batch", json={"customers": [SAMPLE_CUSTOMER] * n})
+        data = res.json()
+        assert len(data["results"]) == n
+
+    def test_batch_summary_fields_present(self, client):
+        data = client.post("/batch", json={"customers": [SAMPLE_CUSTOMER]}).json()
+        for field in ["total", "high_risk", "medium_risk", "low_risk", "avg_churn_probability"]:
+            assert field in data["summary"], f"Missing summary field: {field}"
+
+    def test_batch_empty_returns_400(self, client):
+        res = client.post("/batch", json={"customers": []})
+        assert res.status_code == 400
+
+    def test_batch_over_limit_returns_400(self, client):
+        res = client.post("/batch", json={"customers": [SAMPLE_CUSTOMER] * 501})
+        assert res.status_code == 400
 
 
-# ── Test 6: Validation error ──────────────────────────────────────────────────
-print("\n── POST /predict (bad input — should return 422) ────────────────")
-bad = {**SAMPLE, "Contract": "INVALID_CONTRACT"}
-r = requests.post(f"{BASE}/predict", json=bad)
-check("Returns 422",  r.status_code == 422, f"got {r.status_code}")
+# ── /dashboard ───────────────────────────────────────────────────────────────
 
-print("\n── POST /predict (missing field — should return 422) ────────────")
-incomplete = {k: v for k, v in SAMPLE.items() if k != "MonthlyCharges"}
-r = requests.post(f"{BASE}/predict", json=incomplete)
-check("Returns 422",  r.status_code == 422, f"got {r.status_code}")
+class TestDashboard:
+    def test_dashboard_returns_200(self, client):
+        res = client.get("/dashboard")
+        assert res.status_code == 200
 
+    def test_dashboard_model_metrics_present(self, client):
+        data = client.get("/dashboard").json()
+        assert "model_metrics" in data
+        assert "roc_auc" in data["model_metrics"]
 
-# ── Test 7: What-if ────────────────────────────────────────────────────────────
-print("\n── POST /whatif ─────────────────────────────────────────────────")
-whatif_body = {
-    "customer":  SAMPLE,
-    "overrides": {"Contract": "Two year", "PaymentMethod": "Bank transfer (automatic)"}
-}
-r = requests.post(f"{BASE}/whatif", json=whatif_body)
-check("Status 200",                     r.status_code == 200, r.text[:200])
-wi = r.json()
-check("Has 'original' key",             "original"  in wi)
-check("Has 'modified' key",             "modified"  in wi)
-check("Has 'probability_delta'",        "probability_delta" in wi)
-check("Delta is negative (risk went down)",
-      wi.get("probability_delta", 1) < 0,
-      f"delta={wi.get('probability_delta')} — switching to 2yr contract should reduce churn prob")
-print(f"     original={wi['original']['churn_probability']}  →  modified={wi['modified']['churn_probability']}  delta={wi['probability_delta']}")
+    def test_dashboard_feature_importance_list(self, client):
+        data = client.get("/dashboard").json()
+        fi = data["feature_importance"]
+        assert isinstance(fi, list)
+        assert len(fi) > 0
+        assert "feature" in fi[0]
+        assert "importance" in fi[0]
 
+    def test_dashboard_risk_distribution_sums(self, client):
+        data = client.get("/dashboard").json()
+        rd = data["risk_distribution"]
+        assert rd["high"] + rd["medium"] + rd["low"] == 1000  # sim population
 
-# ── Test 8: Batch CSV upload ───────────────────────────────────────────────────
-print("\n── POST /batch (2-row CSV) ───────────────────────────────────────")
-import io
-import csv
-
-rows = [SAMPLE, LOW_RISK]
-buf = io.StringIO()
-writer = csv.DictWriter(buf, fieldnames=list(SAMPLE.keys()))
-writer.writeheader()
-writer.writerows(rows)
-csv_bytes = buf.getvalue().encode()
-
-r = requests.post(
-    f"{BASE}/batch",
-    files={"file": ("test_customers.csv", io.BytesIO(csv_bytes), "text/csv")}
-)
-check("Status 200",             r.status_code == 200, r.text[:300])
-check("Returns CSV content",    "text/csv" in r.headers.get("content-type", ""))
-
-import pandas as pd
-result_df = pd.read_csv(io.StringIO(r.content.decode()))
-check("Result has 2 rows",              len(result_df) == 2, f"got {len(result_df)}")
-check("Has churn_probability column",   "churn_probability" in result_df.columns)
-check("Has risk_tier column",           "risk_tier"         in result_df.columns)
-print(f"     Row 0: prob={result_df['churn_probability'].iloc[0]}  tier={result_df['risk_tier'].iloc[0]}")
-print(f"     Row 1: prob={result_df['churn_probability'].iloc[1]}  tier={result_df['risk_tier'].iloc[1]}")
-
-
-# ── Summary ────────────────────────────────────────────────────────────────────
-print("\n" + "="*55)
-if not errors:
-    print(f"  ALL TESTS PASSED ✓ — backend is ready for Step 3 (frontend)")
-else:
-    print(f"  {len(errors)} test(s) FAILED:")
-    for e in errors:
-        print(f"    - {e}")
-    print("\n  Fix these before moving to the frontend.")
-print("="*55 + "\n")
+    def test_dashboard_fold_metrics_count(self, client):
+        data = client.get("/dashboard").json()
+        folds = data["model_health"]["fold_metrics"]
+        assert len(folds) == 5
