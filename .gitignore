@@ -1,4 +1,5 @@
 *.pkl
+!backend/models/fold_models.pkl
 *.joblib
 __pycache__/
 *.py[cod]
