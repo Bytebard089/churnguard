@@ -397,6 +397,180 @@ def get_sample():
         raise HTTPException(status_code=500, detail=f"Could not load sample: {exc}")
 
 
+@app.get("/features", tags=["utils"])
+def get_features():
+    """Return dynamic form field definitions for the frontend."""
+    try:
+        sample = json.loads(SAMPLE_PATH.read_text())
+    except Exception:
+        sample = {}
+
+    def d(key, fallback=None):
+        return sample.get(key, fallback)
+
+    return [
+        {
+            "field": "tenure",
+            "label": "Tenure (months)",
+            "type": "number",
+            "group": "Account",
+            "min": 0,
+            "max": 120,
+            "default": d("tenure"),
+        },
+        {
+            "field": "Contract",
+            "label": "Contract",
+            "type": "select",
+            "group": "Account",
+            "options": ["Month-to-month", "One year", "Two year"],
+            "default": d("Contract"),
+        },
+        {
+            "field": "PaperlessBilling",
+            "label": "Paperless Billing",
+            "type": "select",
+            "group": "Account",
+            "options": ["Yes", "No"],
+            "default": d("PaperlessBilling"),
+        },
+        {
+            "field": "PaymentMethod",
+            "label": "Payment Method",
+            "type": "select",
+            "group": "Account",
+            "options": [
+                "Electronic check",
+                "Mailed check",
+                "Bank transfer (automatic)",
+                "Credit card (automatic)",
+            ],
+            "default": d("PaymentMethod"),
+        },
+        {
+            "field": "MonthlyCharges",
+            "label": "Monthly Charges",
+            "type": "number",
+            "group": "Charges",
+            "min": 0,
+            "max": 500,
+            "default": d("MonthlyCharges"),
+        },
+        {
+            "field": "TotalCharges",
+            "label": "Total Charges",
+            "type": "number",
+            "group": "Charges",
+            "min": 0,
+            "default": d("TotalCharges"),
+        },
+        {
+            "field": "gender",
+            "label": "Gender",
+            "type": "select",
+            "group": "Demographics",
+            "options": ["Male", "Female"],
+            "default": d("gender"),
+        },
+        {
+            "field": "SeniorCitizen",
+            "label": "Senior Citizen",
+            "type": "select",
+            "group": "Demographics",
+            "options": ["Yes", "No"],
+            "default": d("SeniorCitizen"),
+        },
+        {
+            "field": "Partner",
+            "label": "Partner",
+            "type": "select",
+            "group": "Demographics",
+            "options": ["Yes", "No"],
+            "default": d("Partner"),
+        },
+        {
+            "field": "Dependents",
+            "label": "Dependents",
+            "type": "select",
+            "group": "Demographics",
+            "options": ["Yes", "No"],
+            "default": d("Dependents"),
+        },
+        {
+            "field": "PhoneService",
+            "label": "Phone Service",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No"],
+            "default": d("PhoneService"),
+        },
+        {
+            "field": "MultipleLines",
+            "label": "Multiple Lines",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No phone service"],
+            "default": d("MultipleLines"),
+        },
+        {
+            "field": "InternetService",
+            "label": "Internet Service",
+            "type": "select",
+            "group": "Services",
+            "options": ["DSL", "Fiber optic", "No"],
+            "default": d("InternetService"),
+        },
+        {
+            "field": "OnlineSecurity",
+            "label": "Online Security",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No internet service"],
+            "default": d("OnlineSecurity"),
+        },
+        {
+            "field": "OnlineBackup",
+            "label": "Online Backup",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No internet service"],
+            "default": d("OnlineBackup"),
+        },
+        {
+            "field": "DeviceProtection",
+            "label": "Device Protection",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No internet service"],
+            "default": d("DeviceProtection"),
+        },
+        {
+            "field": "TechSupport",
+            "label": "Tech Support",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No internet service"],
+            "default": d("TechSupport"),
+        },
+        {
+            "field": "StreamingTV",
+            "label": "Streaming TV",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No internet service"],
+            "default": d("StreamingTV"),
+        },
+        {
+            "field": "StreamingMovies",
+            "label": "Streaming Movies",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No internet service"],
+            "default": d("StreamingMovies"),
+        },
+    ]
+
+
 @app.post("/predict", response_model=PredictionResponse, tags=["inference"])
 def predict(customer: CustomerInput):
     """

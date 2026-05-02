@@ -1,6 +1,6 @@
 {
   "gender": "Male",
-  "SeniorCitizen": 0,
+  "SeniorCitizen": "No",
   "Partner": "Yes",
   "Dependents": "Yes",
   "tenure": 29,
