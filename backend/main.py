@@ -137,7 +137,7 @@ class CustomerInput(BaseModel):
 
     # Demographic
     gender: str = Field(..., description="'Male' or 'Female'")
-    SeniorCitizen: str = Field(..., description="'Yes' or 'No'")
+    SeniorCitizen: str | int = Field(..., description="'Yes'/'No' or 0/1")
     Partner: str = Field(..., description="'Yes' or 'No'")
     Dependents: str = Field(..., description="'Yes' or 'No'")
 
@@ -175,6 +175,14 @@ class CustomerInput(BaseModel):
             raise ValueError(f"Contract must be one of {valid}")
         return v
 
+    @validator("SeniorCitizen")
+    def normalize_senior_citizen(cls, v):
+        if v in (1, "1", "Yes"):
+            return "Yes"
+        if v in (0, "0", "No"):
+            return "No"
+        raise ValueError("SeniorCitizen must be 0/1 or 'Yes'/'No'")
+
 
 class PredictionResponse(BaseModel):
     churn_probability: float
@@ -192,6 +200,11 @@ class WhatIfResponse(BaseModel):
     modified_risk_tier: str
     overrides: dict
     latency_ms: float
+
+
+class WhatIfRequest(BaseModel):
+    base: CustomerInput
+    overrides: dict = Field(default_factory=dict)
 
 
 class BatchRequest(BaseModel):
@@ -227,6 +240,17 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         Model-ready DataFrame with exactly ``len(_feature_cols)`` columns.
     """
     df = df.copy()
+
+    # ── normalize SeniorCitizen to Yes/No ──
+    if "SeniorCitizen" in df.columns:
+        df["SeniorCitizen"] = df["SeniorCitizen"].map({
+            1: "Yes",
+            0: "No",
+            "1": "Yes",
+            "0": "No",
+            "Yes": "Yes",
+            "No": "No",
+        }).fillna(df["SeniorCitizen"])
 
     # ── service count ──
     service_cols = [
@@ -623,7 +647,7 @@ def predict(customer: CustomerInput):
 
 
 @app.post("/whatif", response_model=WhatIfResponse, tags=["inference"])
-def what_if(base: CustomerInput, overrides: dict):
+def what_if(payload: WhatIfRequest):
     """
     Simulate the impact of changing customer parameters.
 
@@ -642,7 +666,8 @@ def what_if(base: CustomerInput, overrides: dict):
     """
     t0 = time.perf_counter()
     try:
-        original_dict = base.dict()
+        original_dict = payload.base.dict()
+        overrides = payload.overrides or {}
         modified_dict = {**original_dict, **overrides}
 
         original_df = engineer_features(pd.DataFrame([original_dict]))
