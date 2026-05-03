@@ -165,13 +165,15 @@ export default function PredictionResult({ result }) {
 
   const {
     churn_probability,
-    churn_predicted,
+    churn_prediction,
     risk_tier,
     confidence,
     shap_values,
     fold_probabilities,
     latency_ms,
   } = result
+
+  const churn_predicted = churn_prediction
 
   return (
     <div className="animate-slideUp" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>

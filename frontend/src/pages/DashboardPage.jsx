@@ -9,7 +9,7 @@ import {
   PolarAngleAxis, PolarRadiusAxis, Legend,
 } from 'recharts'
 import { Activity, AlertTriangle, CheckCircle, TrendingDown, Users, Zap } from 'lucide-react'
-import { Card, SectionTitle, Spinner } from '../components/ui'
+import { Button, Card, SectionTitle, Spinner } from '../components/ui'
 import { getDashboard } from '../api/client'
 
 // ─── colour palette (matches CSS vars) ──────────────────────────────────────
@@ -24,6 +24,52 @@ const COLORS = {
 // ─── helpers ─────────────────────────────────────────────────────────────────
 const fmtPct = (v) => `${(v * 100).toFixed(1)}%`
 const fmtMs = (v) => `${v.toFixed(0)} ms`
+
+const CACHE_KEY = 'churnguard.dashboard.cache'
+const CACHE_TIME_KEY = 'churnguard.dashboard.cache_time'
+
+const DEMO_DATA = {
+  model_metrics: {
+    roc_auc: 0.9165,
+    precision: 0.832,
+    recall: 0.781,
+    f1: 0.805,
+    accuracy: 0.812,
+  },
+  risk_distribution: {
+    high: 180,
+    medium: 320,
+    low: 500,
+    high_pct: 18,
+    medium_pct: 32,
+    low_pct: 50,
+  },
+  feature_importance: [
+    { feature: 'Contract_Month-to-month', importance: 0.1821 },
+    { feature: 'tenure', importance: 0.1432 },
+    { feature: 'MonthlyCharges', importance: 0.1124 },
+    { feature: 'InternetService_Fiber optic', importance: 0.0917 },
+    { feature: 'OnlineSecurity_Yes', importance: 0.0714 },
+    { feature: 'PaymentMethod_Electronic check', importance: 0.0619 },
+    { feature: 'TechSupport_Yes', importance: 0.0541 },
+    { feature: 'PaperlessBilling_Yes', importance: 0.0428 },
+    { feature: 'StreamingTV_Yes', importance: 0.0319 },
+    { feature: 'Partner_Yes', importance: 0.0286 },
+  ],
+  prediction_stats: {
+    total: 1384,
+    avg_latency_ms: 98.6,
+  },
+  model_health: {
+    fold_metrics: [
+      { roc_auc: 0.914, precision: 0.826, recall: 0.776, f1: 0.800 },
+      { roc_auc: 0.921, precision: 0.839, recall: 0.789, f1: 0.813 },
+      { roc_auc: 0.909, precision: 0.821, recall: 0.769, f1: 0.794 },
+      { roc_auc: 0.918, precision: 0.835, recall: 0.783, f1: 0.808 },
+      { roc_auc: 0.920, precision: 0.840, recall: 0.790, f1: 0.814 },
+    ],
+  },
+}
 
 // ─── sub-components ──────────────────────────────────────────────────────────
 function KpiCard({ icon: Icon, label, value, sub, color = 'var(--accent)' }) {
@@ -66,16 +112,65 @@ function CustomTooltip({ active, payload, label, formatter }) {
 }
 
 // ─── main ────────────────────────────────────────────────────────────────────
-export default function DashboardPage() {
+export default function DashboardPage({ predictionHistory = [] }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [stale, setStale] = useState(false)
+
+  function loadFromCache() {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY)
+      if (!raw) return null
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
+  }
+
+  function saveToCache(payload) {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(payload))
+      localStorage.setItem(CACHE_TIME_KEY, new Date().toISOString())
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  async function fetchDashboard() {
+    setLoading(true)
+    setError(null)
+    try {
+      const timeoutMs = 12_000
+      const timeout = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Backend cold start timeout')), timeoutMs)
+      })
+      const payload = await Promise.race([getDashboard(), timeout])
+      setData(payload)
+      setStale(false)
+      saveToCache(payload)
+    } catch (e) {
+      const cached = loadFromCache()
+      if (cached) {
+        setData(cached)
+      } else {
+        setData(DEMO_DATA)
+      }
+      setStale(true)
+      setError(e?.message || 'Backend unavailable')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
-    getDashboard()
-      .then(setData)
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false))
+    const cached = loadFromCache()
+    if (cached) {
+      setData(cached)
+      setLoading(false)
+      setStale(true)
+    }
+    fetchDashboard()
   }, [])
 
   if (loading) return (
@@ -85,11 +180,14 @@ export default function DashboardPage() {
     </div>
   )
 
-  if (error) return (
+  if (error && !data) return (
     <Card style={{ textAlign: 'center', padding: '3rem', color: 'var(--risk-high)' }}>
       <AlertTriangle size={32} style={{ marginBottom: '0.75rem' }} />
       <div style={{ fontWeight: 600 }}>Failed to load dashboard</div>
       <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>{error}</div>
+      <Button variant="secondary" size="sm" style={{ marginTop: '1rem' }} onClick={fetchDashboard}>
+        Retry
+      </Button>
     </Card>
   )
 
@@ -100,6 +198,8 @@ export default function DashboardPage() {
     prediction_stats,
     model_health,
   } = data
+
+  const recentPredictions = predictionHistory.slice(-5).reverse()
 
   // ── risk pie data ──
   const pieData = [
@@ -124,6 +224,22 @@ export default function DashboardPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
+      {stale && (
+        <Card style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <AlertTriangle size={18} style={{ color: 'var(--risk-med)' }} />
+            <div>
+              <div style={{ fontWeight: 700 }}>Backend is waking up</div>
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                Showing cached/demo analytics while the API cold-starts.
+              </div>
+            </div>
+          </div>
+          <Button variant="secondary" size="sm" onClick={fetchDashboard}>
+            Retry
+          </Button>
+        </Card>
+      )}
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
         <div>
@@ -138,7 +254,8 @@ export default function DashboardPage() {
           background: '#34d39918', border: '1px solid #34d39940',
           padding: '0.375rem 0.75rem', borderRadius: '99px', fontWeight: 600,
         }}>
-          <CheckCircle size={13} /> Model Healthy
+          {stale ? <AlertTriangle size={13} /> : <CheckCircle size={13} />}
+          {stale ? 'Degraded (stale data)' : 'Model Healthy'}
         </div>
       </div>
 
@@ -149,6 +266,52 @@ export default function DashboardPage() {
         <KpiCard icon={Users} label="Total Predictions" value={prediction_stats.total.toLocaleString()} sub="since deployment" color={COLORS.med} />
         <KpiCard icon={TrendingDown} label="High Risk Customers" value={`${risk_distribution.high_pct.toFixed(1)}%`} sub="of scored population" color={COLORS.high} />
       </div>
+
+      {/* Recent predictions */}
+      <Card>
+        <SectionTitle sub="Latest predictions from this session">
+          Session History
+        </SectionTitle>
+        {recentPredictions.length === 0 ? (
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
+            No session predictions yet. Run a prediction to see it here.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                  {['Risk', 'Probability', 'Confidence', 'Latency'].map((h) => (
+                    <th key={h} style={{
+                      textAlign: 'left', padding: '0.5rem 0.75rem',
+                      color: 'var(--text-muted)', fontFamily: 'var(--font-display)',
+                      fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.06em',
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {recentPredictions.map((row, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '0.625rem 0.75rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                      {row.risk_tier}
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem', fontFamily: 'var(--font-mono)' }}>
+                      {fmtPct(row.churn_probability)}
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem', fontFamily: 'var(--font-mono)' }}>
+                      {row.confidence}
+                    </td>
+                    <td style={{ padding: '0.625rem 0.75rem', fontFamily: 'var(--font-mono)' }}>
+                      {fmtMs(row.latency_ms)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
       {/* Charts row 1 */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1.5rem' }}>
