@@ -212,6 +212,22 @@ export default function WhatIfPage() {
     })
   }, [])
 
+  useEffect(() => {
+    if (!baseCustomer) return
+    const changed = Object.keys(overrides).some(
+      (k) => overrides[k] !== baseCustomer?.[k]
+    )
+    if (!changed) {
+      setResult(null)
+      return
+    }
+    const t = setTimeout(async () => {
+      const res = await whatifApi.run(baseCustomer, overrides)
+      if (res) setResult(res)
+    }, 400)
+    return () => clearTimeout(t)
+  }, [baseCustomer, overrides])
+
   function handleOverride(field, value) {
     setOverrides((prev) => ({ ...prev, [field]: value }))
     setTouched((prev) => ({ ...prev, [field]: true }))
@@ -219,7 +235,7 @@ export default function WhatIfPage() {
   }
 
   async function handleSimulate() {
-    if (!baseCustomer || Object.keys(overrides).length === 0) return
+    if (!baseCustomer) return
     const res = await whatifApi.run(baseCustomer, overrides)
     if (res) setResult(res)
   }
