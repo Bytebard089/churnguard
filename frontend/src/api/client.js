@@ -71,11 +71,7 @@ export async function predict(customer) {
  * @returns {Promise<Object>} WhatIfResponse
  */
 export async function whatif(base, overrides) {
-  const { data } = await axiosInstance.post(
-    '/whatif',
-    { ...base },
-    { params: overrides },       // overrides sent as query params
-  )
+  const { data } = await axiosInstance.post('/whatif', { base, overrides })
   return data
 }
 
@@ -84,9 +80,7 @@ export async function whatif(base, overrides) {
  * Used when overrides object is complex.
  */
 export async function whatifPost(base, overrides) {
-  const { data } = await axiosInstance.post('/whatif', base, {
-    params: overrides,
-  })
+  const { data } = await axiosInstance.post('/whatif', { base, overrides })
   return data
 }
 
