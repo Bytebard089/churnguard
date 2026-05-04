@@ -7,53 +7,42 @@
 
 /* ─── tokens ──────────────────────────────────────────────────────────────── */
 :root {
-  /* bg layers */
-  --bg-base:      #080b10;
-  --bg-surface:   #0d1117;
-  --bg-elevated:  #141b24;
-  --bg-overlay:   #1c2433;
-
-  /* borders */
-  --border:       #1e2d3d;
-  --border-hover: #2e4260;
-
-  /* text */
-  --text-primary:   #e6edf3;
-  --text-secondary: #8b949e;
-  --text-muted:     #484f58;
-
-  /* accent */
-  --accent:         #00e5ff;
-  --accent-dim:     #00b8cc;
-  --accent-glow:    rgba(0, 229, 255, 0.06);
-
-  /* risk colours */
-  --risk-high:      #f87171;
-  --risk-high-bg:   rgba(248, 113, 113, 0.12);
-  --risk-med:       #fbbf24;
-  --risk-med-bg:    rgba(251, 191, 36, 0.12);
-  --risk-low:       #34d399;
-  --risk-low-bg:    rgba(52, 211, 153, 0.12);
-
-  /* danger */
-  --danger:         #f85149;
-
-  /* typography */
+  --bg-base:      #060810;
+  --bg-surface:   #0a0d15;
+  --bg-elevated:  #111520;
+  --bg-overlay:   #181d2e;
+  --border:       #1a2236;
+  --border-hover: #2a3a5c;
+  --border-bright:#334466;
+  --text-primary:   #eef2ff;
+  --text-secondary: #8892b0;
+  --text-muted:     #4a5270;
+  --accent:         #6c8eff;
+  --accent-dim:     #4a6ee0;
+  --accent-glow:    rgba(108,142,255,0.07);
+  --accent-strong:  rgba(108,142,255,0.18);
+  --risk-high:      #ff6b6b;
+  --risk-high-bg:   rgba(255,107,107,0.1);
+  --risk-med:       #ffd166;
+  --risk-med-bg:    rgba(255,209,102,0.1);
+  --risk-low:       #06d6a0;
+  --risk-low-bg:    rgba(6,214,160,0.1);
+  --success:        #06d6a0;
+  --success-dim:    rgba(6,214,160,0.08);
+  --danger:         #ff6b6b;
+  --warning:        #ffd166;
   --font-display: 'Sora', sans-serif;
   --font-body:    'Space Grotesk', sans-serif;
   --font-mono:    'JetBrains Mono', monospace;
-
-  /* radii */
   --radius-sm:  6px;
   --radius-md:  10px;
   --radius-lg:  14px;
   --radius-xl:  20px;
-
-  /* nav */
-  --nav-width: 220px;
-
-  /* transitions */
+  --nav-width: 230px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
+  --shadow-glow: 0 0 30px rgba(108,142,255,0.12);
 }
 
 /* ─── resets ──────────────────────────────────────────────────────────────── */
