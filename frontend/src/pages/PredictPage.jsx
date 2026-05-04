@@ -16,18 +16,21 @@ export default function PredictPage({ predictFn }) {
   const sampleApi = useApi(getSample)
   const featApi = useApi(getFeatures)
 
+  async function loadFeatures() {
+    const defs = await featApi.run()
+    if (defs && defs.length > 0) {
+      setFields(defs)
+      const defaults = {}
+      defs.forEach((f) => {
+        defaults[f.field] = f.default ?? ''
+      })
+      setValues((prev) => ({ ...defaults, ...prev }))
+    }
+  }
+
   useEffect(() => {
     async function loadData() {
-      const defs = await featApi.run()
-      if (defs && defs.length > 0) {
-        setFields(defs)
-        const defaults = {}
-        defs.forEach((f) => {
-          defaults[f.field] = f.default ?? ''
-        })
-        setValues(defaults)
-      }
-
+      await loadFeatures()
       const sample = await sampleApi.run()
       if (sample) setValues(sample)
     }
@@ -65,6 +68,13 @@ export default function PredictPage({ predictFn }) {
         {featApi.loading ? (
           <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}>
             <Spinner />
+          </div>
+        ) : featApi.error ? (
+          <div style={{ padding: '1rem 0' }}>
+            <ErrorBox message={`Failed to load form fields: ${featApi.error}`} />
+            <Button variant="secondary" size="sm" onClick={loadFeatures}>
+              <RefreshCw size={14} /> Retry
+            </Button>
           </div>
         ) : (
           <CustomerForm fields={fields} values={values} onChange={handleChange} />
