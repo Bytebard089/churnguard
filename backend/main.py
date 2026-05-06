@@ -1,210 +1,205 @@
 """
-ChurnGuard API — main.py
-========================
-FastAPI backend for customer churn prediction.
-
-Architecture
-------------
-- 5-fold XGBoost ensemble (fold_models.pkl)
-- Feature engineering mirrors the training notebook exactly
-- Endpoints: /predict, /whatif, /batch, /dashboard, /health, /sample
-
-Author : ChurnGuard team
-Python : >=3.10
+ChurnGuard API — main.py  (v3.0)
+=================================
+Fixes vs v2.0:
+  Fix 1 — engineer_for_serving() imported from core/features.py
+  Fix 2 — real SHAP via shap.TreeExplainer (not gain proxy)
+  Fix 3 — SQLite logs every prediction; /dashboard reads real data
+  Fix 4 — optimal_threshold loaded from metadata.json (not hardcoded 0.5)
 """
-
 from __future__ import annotations
 
-import json
-import logging
-import os
-import time
-import traceback
+import json, logging, os, sqlite3, time, traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
-import joblib
-import numpy as np
-import pandas as pd
+import joblib, numpy as np, pandas as pd, shap
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
-    datefmt="%H:%M:%S",
-)
+logging.basicConfig(level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("churnguard")
 
-# ─── Paths ───────────────────────────────────────────────────────────────────
-
-BASE_DIR = Path(__file__).parent
-MODELS_DIR = BASE_DIR / "models"
-MODEL_PATH = MODELS_DIR / "fold_models.pkl"
-META_PATH = MODELS_DIR / "metadata.json"
-FEAT_PATH = MODELS_DIR / "feature_columns.json"
+# ─── Paths ────────────────────────────────────────────────────────────────────
+BASE_DIR    = Path(__file__).parent
+MODELS_DIR  = BASE_DIR / "models"
+MODEL_PATH  = MODELS_DIR / "fold_models.pkl"
+META_PATH   = MODELS_DIR / "metadata.json"
+FEAT_PATH   = MODELS_DIR / "feature_columns.json"
 SAMPLE_PATH = MODELS_DIR / "sample_input.json"
+DB_PATH     = BASE_DIR / "predictions.db"
 
-# ─── Global model state ───────────────────────────────────────────────────────
-
-_models: list[Any] = []
-_metadata: dict = {}
+# ─── Global state ─────────────────────────────────────────────────────────────
+_models:       list[Any] = []
+_metadata:     dict      = {}
 _feature_cols: list[str] = []
-_prediction_stats: dict = {"total": 0, "latencies_ms": []}
+_explainer:    Any       = None
+_threshold:    float     = 0.5
 
 
-# ─── Lifespan (startup / shutdown) ───────────────────────────────────────────
+# ─── Fix 3: SQLite ────────────────────────────────────────────────────────────
+def _init_db() -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS predictions (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts           REAL    NOT NULL,
+                churn_prob   REAL    NOT NULL,
+                churn_pred   INTEGER NOT NULL,
+                risk_tier    TEXT    NOT NULL,
+                latency_ms   REAL    NOT NULL,
+                contract     TEXT,
+                tenure       REAL,
+                monthly_chg  REAL,
+                internet_svc TEXT
+            )
+        """)
+        conn.commit()
+    log.info("SQLite DB ready at %s", DB_PATH)
 
+
+def _log_prediction(prob, pred, tier, latency_ms, cust):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO predictions (ts,churn_prob,churn_pred,risk_tier,latency_ms,"
+                "contract,tenure,monthly_chg,internet_svc) VALUES (?,?,?,?,?,?,?,?,?)",
+                (time.time(), round(prob,4), int(pred), tier, round(latency_ms,2),
+                 cust.get("Contract"), cust.get("tenure"),
+                 cust.get("MonthlyCharges"), cust.get("InternetService")),
+            )
+            conn.commit()
+    except Exception as e:
+        log.warning("DB log failed: %s", e)
+
+
+def _db_stats() -> dict:
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM predictions"); total  = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM predictions WHERE risk_tier='High'");   high   = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM predictions WHERE risk_tier='Medium'"); medium = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM predictions WHERE risk_tier='Low'");    low    = c.fetchone()[0]
+            c.execute("SELECT AVG(latency_ms) FROM predictions"); avg_lat  = c.fetchone()[0] or 0.0
+            c.execute("SELECT AVG(churn_prob) FROM predictions"); avg_prob = c.fetchone()[0] or 0.0
+            c.execute("SELECT ts,churn_prob,risk_tier FROM predictions ORDER BY ts DESC LIMIT 20")
+            recent = [{"ts":r[0],"churn_prob":r[1],"risk_tier":r[2]} for r in c.fetchall()]
+        return {"total":total,"high":high,"medium":medium,"low":low,
+                "avg_latency_ms":round(avg_lat,2),"avg_churn_prob":round(avg_prob,4),"recent":recent}
+    except Exception as e:
+        log.warning("DB stats failed: %s", e)
+        return {"total":0,"high":0,"medium":0,"low":0,"avg_latency_ms":0,"avg_churn_prob":0,"recent":[]}
+
+
+# ─── Lifespan ─────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load model artifacts on startup; release on shutdown."""
-    global _models, _metadata, _feature_cols
-
-    log.info("Loading model artifacts …")
-    try:
-        _models = joblib.load(MODEL_PATH)
-        _metadata = json.loads(META_PATH.read_text())
-        _feature_cols = json.loads(FEAT_PATH.read_text())
-        log.info(
-            "Loaded %d fold models | %d features | OOF AUC %.4f",
-            len(_models),
-            len(_feature_cols),
-            _metadata.get("oof_auc", 0),
-        )
-    except Exception as exc:
-        log.critical("Failed to load models: %s", exc)
-        raise
-
+    global _models, _metadata, _feature_cols, _explainer, _threshold
+    log.info("Loading artifacts …")
+    _models       = joblib.load(MODEL_PATH)
+    _metadata     = json.loads(META_PATH.read_text())
+    _feature_cols = json.loads(FEAT_PATH.read_text())
+    _threshold    = float(_metadata.get("optimal_threshold", 0.5))  # Fix 4
+    log.info("Loaded %d models | %d features | OOF AUC %.4f | threshold %.3f",
+             len(_models), len(_feature_cols), _metadata.get("oof_auc",0), _threshold)
+    log.info("Building SHAP explainer …")
+    _explainer = shap.TreeExplainer(_models[0])   # Fix 2
+    log.info("SHAP ready")
+    _init_db()                                     # Fix 3
     yield
+    log.info("Shutdown.")
 
-    log.info("Shutting down — goodbye!")
 
+# ─── App ──────────────────────────────────────────────────────────────────────
+app = FastAPI(title="ChurnGuard API", version="3.0.0", lifespan=lifespan,
+    description="5-fold XGBoost churn prediction. Fixes: real SHAP, SQLite, calibrated threshold.")
 
-# ─── App ─────────────────────────────────────────────────────────────────────
-
-app = FastAPI(
-    title="ChurnGuard API",
-    description=(
-        "Customer churn prediction API powered by a 5-fold XGBoost ensemble. "
-        "Provides single prediction, what-if simulation, batch scoring, and "
-        "dashboard analytics endpoints."
-    ),
-    version="2.0.0",
-    lifespan=lifespan,
-)
-
-# CORS — allow Vercel frontend + localhost dev
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "https://churnguard-ten.vercel.app,http://localhost:5173,http://localhost:3000",
 ).split(",")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-
-# ─── Request / response middleware ───────────────────────────────────────────
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Log every request with method, path, and elapsed time."""
     t0 = time.perf_counter()
     response = await call_next(request)
-    elapsed = (time.perf_counter() - t0) * 1000
-    log.info("%s %s → %d  (%.1f ms)", request.method, request.url.path, response.status_code, elapsed)
+    log.info("%s %s → %d  (%.1f ms)", request.method, request.url.path,
+             response.status_code, (time.perf_counter()-t0)*1000)
     return response
 
 
-# ─── Pydantic schemas ────────────────────────────────────────────────────────
-
+# ─── Schemas ──────────────────────────────────────────────────────────────────
 class CustomerInput(BaseModel):
-    """Raw customer record — mirrors the Telco dataset schema."""
-
-    # Numeric
-    tenure: float = Field(..., ge=0, le=120, description="Months as customer")
-    MonthlyCharges: float = Field(..., ge=0, description="Monthly bill (USD)")
-    TotalCharges: float = Field(..., ge=0, description="Total billed to date (USD)")
-
-    # Demographic
-    gender: str = Field(..., description="'Male' or 'Female'")
-    SeniorCitizen: str | int = Field(..., description="'Yes'/'No' or 0/1")
-    Partner: str = Field(..., description="'Yes' or 'No'")
-    Dependents: str = Field(..., description="'Yes' or 'No'")
-
-    # Phone
-    PhoneService: str = Field(..., description="'Yes' or 'No'")
-    MultipleLines: str = Field(..., description="'Yes', 'No', or 'No phone service'")
-
-    # Internet
-    InternetService: str = Field(..., description="'DSL', 'Fiber optic', or 'No'")
+    tenure: float           = Field(..., ge=0, le=120)
+    MonthlyCharges: float   = Field(..., ge=0)
+    TotalCharges: float     = Field(..., ge=0)
+    gender: str
+    SeniorCitizen: Union[str, int]
+    Partner: str
+    Dependents: str
+    PhoneService: str
+    MultipleLines: str
+    InternetService: str
     OnlineSecurity: str
     OnlineBackup: str
     DeviceProtection: str
     TechSupport: str
     StreamingTV: str
     StreamingMovies: str
-
-    # Account
-    Contract: str = Field(..., description="'Month-to-month', 'One year', 'Two year'")
-    PaperlessBilling: str = Field(..., description="'Yes' or 'No'")
-    PaymentMethod: str = Field(
-        ...,
-        description="'Electronic check', 'Mailed check', 'Bank transfer (automatic)', 'Credit card (automatic)'",
-    )
+    Contract: str
+    PaperlessBilling: str
+    PaymentMethod: str
 
     @validator("gender")
-    def validate_gender(cls, v):
-        if v not in ("Male", "Female"):
-            raise ValueError("gender must be 'Male' or 'Female'")
+    def v_gender(cls, v):
+        if v not in ("Male","Female"): raise ValueError("gender must be Male or Female")
         return v
 
     @validator("Contract")
-    def validate_contract(cls, v):
-        valid = {"Month-to-month", "One year", "Two year"}
-        if v not in valid:
-            raise ValueError(f"Contract must be one of {valid}")
+    def v_contract(cls, v):
+        if v not in {"Month-to-month","One year","Two year"}:
+            raise ValueError("Invalid contract")
         return v
 
-    @validator("SeniorCitizen")
-    def normalize_senior_citizen(cls, v):
-        if v in (1, "1", "Yes"):
-            return "Yes"
-        if v in (0, "0", "No"):
-            return "No"
-        raise ValueError("SeniorCitizen must be 0/1 or 'Yes'/'No'")
+    @validator("SeniorCitizen", pre=True)
+    def v_senior(cls, v):
+        if v in (1,"1","Yes"): return "Yes"
+        if v in (0,"0","No"):  return "No"
+        raise ValueError("SeniorCitizen must be 0/1/Yes/No")
 
 
 class PredictionResponse(BaseModel):
     churn_probability: float
-    churn_prediction: bool
-    risk_tier: str
-    shap_top_features: list[dict]
-    confidence: float
-    latency_ms: float
+    churn_prediction:  bool
+    risk_tier:         str
+    shap_values:       list[dict]
+    confidence:        float
+    latency_ms:        float
+    threshold_used:    float     # Fix 4: transparency
+
+
+class WhatIfRequest(BaseModel):
+    base:      CustomerInput
+    overrides: dict = Field(default_factory=dict)
 
 
 class WhatIfResponse(BaseModel):
     original_probability: float
     modified_probability: float
-    original_risk_tier: str
-    modified_risk_tier: str
-    overrides: dict
-    latency_ms: float
-
-
-class WhatIfRequest(BaseModel):
-    base: CustomerInput
-    overrides: dict = Field(default_factory=dict)
+    original_risk_tier:   str
+    modified_risk_tier:   str
+    overrides:            dict
+    latency_ms:           float
 
 
 class BatchRequest(BaseModel):
@@ -212,643 +207,205 @@ class BatchRequest(BaseModel):
 
 
 class BatchResponse(BaseModel):
-    results: list[dict]
-    summary: dict
+    results:   list[dict]
+    summary:   dict
     latency_ms: float
 
 
-# ─── Feature engineering ─────────────────────────────────────────────────────
+# ─── Fix 1: feature engineering from single source of truth ───────────────────
+from core.features import engineer_for_serving  # noqa: E402
 
-def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Replicate the exact feature engineering from the training notebook.
 
-    Steps
-    -----
-    1. Derived numeric features (service_count, tenure groups, risk scores …)
-    2. One-hot encode categorical columns
-    3. Align to the training feature column list (fill missing with 0)
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Raw customer record(s) — must contain all CustomerInput fields.
-
-    Returns
-    -------
-    pd.DataFrame
-        Model-ready DataFrame with exactly ``len(_feature_cols)`` columns.
-    """
-    df = df.copy()
-
-    # ── normalize SeniorCitizen to Yes/No ──
-    if "SeniorCitizen" in df.columns:
-        df["SeniorCitizen"] = df["SeniorCitizen"].map({
-            1: "Yes",
-            0: "No",
-            "1": "Yes",
-            "0": "No",
-            "Yes": "Yes",
-            "No": "No",
-        }).fillna(df["SeniorCitizen"])
-
-    # ── service count ──
-    service_cols = [
-        "PhoneService", "MultipleLines", "InternetService",
-        "OnlineSecurity", "OnlineBackup", "DeviceProtection",
-        "TechSupport", "StreamingTV", "StreamingMovies",
-    ]
-    df["service_count"] = df[service_cols].apply(
-        lambda row: sum(v == "Yes" for v in row), axis=1
-    )
-
-    # ── autopay flag ──
-    autopay_methods = {"Bank transfer (automatic)", "Credit card (automatic)"}
-    df["autopay"] = df["PaymentMethod"].isin(autopay_methods).astype(int)
-
-    # ── tenure group (0=new,1=mid,2=long) ──
-    df["tenure_group"] = pd.cut(df["tenure"], bins=[-1, 12, 36, 120], labels=[0, 1, 2]).astype(int)
-
-    # ── contract risk (0=low,1=med,2=high) ──
-    contract_map = {"Two year": 0, "One year": 1, "Month-to-month": 2}
-    df["contract_risk"] = df["Contract"].map(contract_map).fillna(2).astype(int)
-
-    # ── interaction terms ──
-    df["charge_contract_risk"] = df["MonthlyCharges"] * df["contract_risk"]
-    df["tenure_contract_risk"] = df["tenure"] * df["contract_risk"]
-
-    # ── charge analytics ──
-    df["AvgMonthlyCharges"] = np.where(
-        df["tenure"] > 0, df["TotalCharges"] / df["tenure"], df["MonthlyCharges"]
-    )
-    df["ChargeRatio"] = np.where(
-        df["MonthlyCharges"] > 0, df["TotalCharges"] / (df["MonthlyCharges"] * df["tenure"].clip(lower=1)), 1.0
-    )
-    df["ChargePerService"] = np.where(
-        df["service_count"] > 0, df["MonthlyCharges"] / df["service_count"], df["MonthlyCharges"]
-    )
-    df["ExpectedTotal"] = df["MonthlyCharges"] * df["tenure"]
-    df["ChargeDiff"] = df["TotalCharges"] - df["ExpectedTotal"]
-
-    # ── risk flags ──
-    df["high_risk"] = (
-        (df["Contract"] == "Month-to-month") &
-        (df["tenure"] < 12) &
-        (df["MonthlyCharges"] > 65)
-    ).astype(int)
-
-    df["risk_flag"] = (
-        (df["InternetService"] == "Fiber optic") &
-        (df["OnlineSecurity"] == "No")
-    ).astype(int)
-
-    df["fiber_no_sec"] = df["risk_flag"].copy()
-
-    df["new_mtm"] = (
-        (df["Contract"] == "Month-to-month") &
-        (df["tenure"] < 6)
-    ).astype(int)
-
-    df["mtm_high_charge"] = (
-        (df["Contract"] == "Month-to-month") &
-        (df["MonthlyCharges"] > 70)
-    ).astype(int)
-
-    df["risk_score"] = (
-        df["contract_risk"] * 0.4 +
-        (1 - df["autopay"]) * 0.2 +
-        df["risk_flag"] * 0.25 +
-        df["new_mtm"] * 0.15
-    )
-
-    # ── one-hot encoding ──
-    cat_cols = [
-        "gender", "SeniorCitizen", "Partner", "Dependents",
-        "PhoneService", "MultipleLines", "InternetService",
-        "OnlineSecurity", "OnlineBackup", "DeviceProtection",
-        "TechSupport", "StreamingTV", "StreamingMovies",
-        "Contract", "PaperlessBilling", "PaymentMethod",
-    ]
-    df = pd.get_dummies(df, columns=cat_cols, drop_first=True)
-
-    # ── align columns to training schema ──
-    for col in _feature_cols:
-        if col not in df.columns:
-            df[col] = 0
-
-    return df[_feature_cols].astype(float)
+def _featurize(d: dict) -> pd.DataFrame:
+    return engineer_for_serving(pd.DataFrame([d]), _feature_cols)
 
 
 # ─── Inference helpers ────────────────────────────────────────────────────────
-
-def _predict_proba(df: pd.DataFrame) -> np.ndarray:
-    """
-    Run ensemble inference across all folds and average probabilities.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Feature-engineered dataframe.
-
-    Returns
-    -------
-    np.ndarray
-        Array of churn probabilities, shape (n_samples,).
-    """
-    fold_preds = np.array([m.predict_proba(df)[:, 1] for m in _models])
-    return fold_preds.mean(axis=0)
+def _predict_proba(feat_df: pd.DataFrame) -> np.ndarray:
+    return np.array([m.predict_proba(feat_df)[:,1] for m in _models]).mean(axis=0)
 
 
-def _risk_tier(prob: float) -> str:
-    """Classify probability into High / Medium / Low risk tier."""
-    if prob >= 0.65:
-        return "High"
-    if prob >= 0.35:
-        return "Medium"
-    return "Low"
+def _risk_tier(p: float) -> str:
+    return "High" if p >= 0.65 else "Medium" if p >= 0.35 else "Low"
 
 
-def _get_top_shap(df: pd.DataFrame, prob: float, n: int = 5) -> list[dict]:
-    """
-    Return the top-n feature contributions (proxy via feature × value weighting).
-    Uses the first fold's booster for speed — good enough for explanation.
-
-    In production swap for ``shap.TreeExplainer`` on the ensemble mean.
-    """
-    booster = _models[0]
-    scores = booster.get_booster().get_score(importance_type="gain")
-    row = df.iloc[0]
-
-    contributions = []
-    for feat, gain in scores.items():
-        if feat in df.columns:
-            val = float(row[feat])
-            contributions.append({
-                "feature": feat,
-                "value": round(val, 4),
-                "importance": round(gain, 4),
-                "direction": "increases_churn" if val > 0 else "decreases_churn",
-            })
-
-    contributions.sort(key=lambda x: -x["importance"])
-    return contributions[:n]
+def _get_shap(feat_df: pd.DataFrame, n: int = 8) -> list[dict]:
+    """Fix 2: real per-prediction Shapley values from shap.TreeExplainer."""
+    try:
+        sv   = _explainer.shap_values(feat_df)[0]   # shape: (n_features,)
+        out  = [
+            {"feature":   name.replace("_"," "),
+             "shap_val":  round(float(v), 5),
+             "direction": "increases_churn" if v > 0 else "decreases_churn",
+             "value":     round(float(feat_df.iloc[0][name]), 4)}
+            for name, v in zip(_feature_cols, sv)
+        ]
+        out.sort(key=lambda x: -abs(x["shap_val"]))
+        return out[:n]
+    except Exception as e:
+        log.warning("SHAP failed, using gain fallback: %s", e)
+        scores = _models[0].get_booster().get_score(importance_type="gain")
+        total  = sum(scores.values()) or 1
+        return sorted([{"feature":k,"shap_val":round(v/total,5),
+                        "direction":"increases_churn","value":0.0}
+                       for k,v in scores.items()],
+                      key=lambda x:-abs(x["shap_val"]))[:n]
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
-
 @app.get("/health", tags=["ops"])
 def health_check():
-    """
-    Liveness + readiness probe.
-
-    Returns model load status, fold count, and runtime stats.
-    """
-    return {
-        "status": "healthy",
-        "models_loaded": len(_models),
-        "features": len(_feature_cols),
-        "oof_auc": _metadata.get("oof_auc"),
-        "total_predictions": _prediction_stats["total"],
-    }
+    db = _db_stats()
+    return {"status":"healthy","model_ready":len(_models)>0,"models_loaded":len(_models),
+            "features":len(_feature_cols),"oof_auc":_metadata.get("oof_auc"),
+            "pr_auc":_metadata.get("pr_auc"),"optimal_threshold":_threshold,
+            "total_predictions":db["total"]}
 
 
 @app.get("/sample", tags=["utils"])
 def get_sample():
-    """Return a random-ish sample customer input for demo / testing."""
-    try:
-        return json.loads(SAMPLE_PATH.read_text())
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Could not load sample: {exc}")
+    try:    return json.loads(SAMPLE_PATH.read_text())
+    except Exception as e: raise HTTPException(500, str(e))
 
 
 @app.get("/features", tags=["utils"])
 def get_features():
-    """Return dynamic form field definitions for the frontend."""
-    try:
-        sample = json.loads(SAMPLE_PATH.read_text())
-    except Exception:
-        sample = {}
-
-    def d(key, fallback=None):
-        return sample.get(key, fallback)
-
+    try:    sample = json.loads(SAMPLE_PATH.read_text())
+    except: sample = {}
+    d = lambda k, fb=None: sample.get(k, fb)
     return [
-        {
-            "field": "tenure",
-            "label": "Tenure (months)",
-            "type": "number",
-            "group": "Account",
-            "min": 0,
-            "max": 120,
-            "default": d("tenure"),
-        },
-        {
-            "field": "Contract",
-            "label": "Contract",
-            "type": "select",
-            "group": "Account",
-            "options": ["Month-to-month", "One year", "Two year"],
-            "default": d("Contract"),
-        },
-        {
-            "field": "PaperlessBilling",
-            "label": "Paperless Billing",
-            "type": "select",
-            "group": "Account",
-            "options": ["Yes", "No"],
-            "default": d("PaperlessBilling"),
-        },
-        {
-            "field": "PaymentMethod",
-            "label": "Payment Method",
-            "type": "select",
-            "group": "Account",
-            "options": [
-                "Electronic check",
-                "Mailed check",
-                "Bank transfer (automatic)",
-                "Credit card (automatic)",
-            ],
-            "default": d("PaymentMethod"),
-        },
-        {
-            "field": "MonthlyCharges",
-            "label": "Monthly Charges",
-            "type": "number",
-            "group": "Charges",
-            "min": 0,
-            "max": 500,
-            "default": d("MonthlyCharges"),
-        },
-        {
-            "field": "TotalCharges",
-            "label": "Total Charges",
-            "type": "number",
-            "group": "Charges",
-            "min": 0,
-            "default": d("TotalCharges"),
-        },
-        {
-            "field": "gender",
-            "label": "Gender",
-            "type": "select",
-            "group": "Demographics",
-            "options": ["Male", "Female"],
-            "default": d("gender"),
-        },
-        {
-            "field": "SeniorCitizen",
-            "label": "Senior Citizen",
-            "type": "select",
-            "group": "Demographics",
-            "options": ["Yes", "No"],
-            "default": d("SeniorCitizen"),
-        },
-        {
-            "field": "Partner",
-            "label": "Partner",
-            "type": "select",
-            "group": "Demographics",
-            "options": ["Yes", "No"],
-            "default": d("Partner"),
-        },
-        {
-            "field": "Dependents",
-            "label": "Dependents",
-            "type": "select",
-            "group": "Demographics",
-            "options": ["Yes", "No"],
-            "default": d("Dependents"),
-        },
-        {
-            "field": "PhoneService",
-            "label": "Phone Service",
-            "type": "select",
-            "group": "Services",
-            "options": ["Yes", "No"],
-            "default": d("PhoneService"),
-        },
-        {
-            "field": "MultipleLines",
-            "label": "Multiple Lines",
-            "type": "select",
-            "group": "Services",
-            "options": ["Yes", "No", "No phone service"],
-            "default": d("MultipleLines"),
-        },
-        {
-            "field": "InternetService",
-            "label": "Internet Service",
-            "type": "select",
-            "group": "Services",
-            "options": ["DSL", "Fiber optic", "No"],
-            "default": d("InternetService"),
-        },
-        {
-            "field": "OnlineSecurity",
-            "label": "Online Security",
-            "type": "select",
-            "group": "Services",
-            "options": ["Yes", "No", "No internet service"],
-            "default": d("OnlineSecurity"),
-        },
-        {
-            "field": "OnlineBackup",
-            "label": "Online Backup",
-            "type": "select",
-            "group": "Services",
-            "options": ["Yes", "No", "No internet service"],
-            "default": d("OnlineBackup"),
-        },
-        {
-            "field": "DeviceProtection",
-            "label": "Device Protection",
-            "type": "select",
-            "group": "Services",
-            "options": ["Yes", "No", "No internet service"],
-            "default": d("DeviceProtection"),
-        },
-        {
-            "field": "TechSupport",
-            "label": "Tech Support",
-            "type": "select",
-            "group": "Services",
-            "options": ["Yes", "No", "No internet service"],
-            "default": d("TechSupport"),
-        },
-        {
-            "field": "StreamingTV",
-            "label": "Streaming TV",
-            "type": "select",
-            "group": "Services",
-            "options": ["Yes", "No", "No internet service"],
-            "default": d("StreamingTV"),
-        },
-        {
-            "field": "StreamingMovies",
-            "label": "Streaming Movies",
-            "type": "select",
-            "group": "Services",
-            "options": ["Yes", "No", "No internet service"],
-            "default": d("StreamingMovies"),
-        },
+        {"field":"tenure","label":"Tenure (months)","type":"number","group":"Account","min":0,"max":120,"default":d("tenure")},
+        {"field":"Contract","label":"Contract","type":"select","group":"Account","options":["Month-to-month","One year","Two year"],"default":d("Contract")},
+        {"field":"PaperlessBilling","label":"Paperless Billing","type":"select","group":"Account","options":["Yes","No"],"default":d("PaperlessBilling")},
+        {"field":"PaymentMethod","label":"Payment Method","type":"select","group":"Account","options":["Electronic check","Mailed check","Bank transfer (automatic)","Credit card (automatic)"],"default":d("PaymentMethod")},
+        {"field":"MonthlyCharges","label":"Monthly Charges","type":"number","group":"Charges","min":0,"max":500,"default":d("MonthlyCharges")},
+        {"field":"TotalCharges","label":"Total Charges","type":"number","group":"Charges","min":0,"default":d("TotalCharges")},
+        {"field":"gender","label":"Gender","type":"select","group":"Demographics","options":["Male","Female"],"default":d("gender")},
+        {"field":"SeniorCitizen","label":"Senior Citizen","type":"select","group":"Demographics","options":["Yes","No"],"default":d("SeniorCitizen")},
+        {"field":"Partner","label":"Partner","type":"select","group":"Demographics","options":["Yes","No"],"default":d("Partner")},
+        {"field":"Dependents","label":"Dependents","type":"select","group":"Demographics","options":["Yes","No"],"default":d("Dependents")},
+        {"field":"PhoneService","label":"Phone Service","type":"select","group":"Services","options":["Yes","No"],"default":d("PhoneService")},
+        {"field":"MultipleLines","label":"Multiple Lines","type":"select","group":"Services","options":["Yes","No","No phone service"],"default":d("MultipleLines")},
+        {"field":"InternetService","label":"Internet Service","type":"select","group":"Services","options":["DSL","Fiber optic","No"],"default":d("InternetService")},
+        {"field":"OnlineSecurity","label":"Online Security","type":"select","group":"Services","options":["Yes","No","No internet service"],"default":d("OnlineSecurity")},
+        {"field":"OnlineBackup","label":"Online Backup","type":"select","group":"Services","options":["Yes","No","No internet service"],"default":d("OnlineBackup")},
+        {"field":"DeviceProtection","label":"Device Protection","type":"select","group":"Services","options":["Yes","No","No internet service"],"default":d("DeviceProtection")},
+        {"field":"TechSupport","label":"Tech Support","type":"select","group":"Services","options":["Yes","No","No internet service"],"default":d("TechSupport")},
+        {"field":"StreamingTV","label":"Streaming TV","type":"select","group":"Services","options":["Yes","No","No internet service"],"default":d("StreamingTV")},
+        {"field":"StreamingMovies","label":"Streaming Movies","type":"select","group":"Services","options":["Yes","No","No internet service"],"default":d("StreamingMovies")},
     ]
 
 
 @app.post("/predict", response_model=PredictionResponse, tags=["inference"])
 def predict(customer: CustomerInput):
-    """
-    Predict churn probability for a single customer.
-
-    The request body should be a raw CustomerInput (pre-feature-engineering).
-    The API performs all feature engineering internally.
-
-    Returns
-    -------
-    PredictionResponse
-        - ``churn_probability`` : float [0, 1]
-        - ``churn_prediction``  : bool
-        - ``risk_tier``         : 'High' | 'Medium' | 'Low'
-        - ``shap_top_features`` : list of top feature contributions
-        - ``confidence``        : ensemble agreement score [0, 1]
-        - ``latency_ms``        : inference latency
-    """
     t0 = time.perf_counter()
     try:
-        raw_df = pd.DataFrame([customer.dict()])
-        feat_df = engineer_features(raw_df)
-
-        # Ensemble proba + variance for confidence
-        fold_preds = np.array([m.predict_proba(feat_df)[:, 1] for m in _models])
-        prob = float(fold_preds.mean())
+        cd         = customer.dict()
+        feat_df    = _featurize(cd)
+        fold_preds = np.array([m.predict_proba(feat_df)[:,1] for m in _models])
+        prob       = float(fold_preds.mean())
         confidence = float(1 - fold_preds.std())
-
-        tier = _risk_tier(prob)
-        shap = _get_top_shap(feat_df, prob)
-
+        tier       = _risk_tier(prob)
+        shap_out   = _get_shap(feat_df)
         latency_ms = (time.perf_counter() - t0) * 1000
-        _prediction_stats["total"] += 1
-        _prediction_stats["latencies_ms"].append(latency_ms)
-
-        log.info("predict → %.3f (%s)  %.1f ms", prob, tier, latency_ms)
-
+        _log_prediction(prob, prob >= _threshold, tier, latency_ms, cd)  # Fix 3
+        log.info("predict → %.3f (%s)  threshold=%.2f  %.1fms", prob, tier, _threshold, latency_ms)
         return PredictionResponse(
-            churn_probability=round(prob, 4),
-            churn_prediction=prob >= 0.5,
-            risk_tier=tier,
-            shap_top_features=shap,
-            confidence=round(confidence, 4),
-            latency_ms=round(latency_ms, 2),
-        )
-
-    except Exception as exc:
-        log.error("predict error: %s\n%s", exc, traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(exc))
+            churn_probability=round(prob,4), churn_prediction=prob>=_threshold,  # Fix 4
+            risk_tier=tier, shap_values=shap_out, confidence=round(confidence,4),
+            latency_ms=round(latency_ms,2), threshold_used=_threshold)
+    except Exception as e:
+        log.error("predict error: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(500, str(e))
 
 
 @app.post("/whatif", response_model=WhatIfResponse, tags=["inference"])
 def what_if(payload: WhatIfRequest):
-    """
-    Simulate the impact of changing customer parameters.
-
-    Compares the original customer record against a modified version
-    where ``overrides`` dict replaces specified fields.
-
-    Parameters
-    ----------
-    base      : CustomerInput  — original customer record
-    overrides : dict           — fields to change (e.g. {"Contract": "Two year"})
-
-    Returns
-    -------
-    WhatIfResponse
-        Original and modified probabilities + risk tiers.
-    """
     t0 = time.perf_counter()
     try:
-        original_dict = payload.base.dict()
-        overrides = payload.overrides or {}
-        modified_dict = {**original_dict, **overrides}
-
-        original_df = engineer_features(pd.DataFrame([original_dict]))
-        modified_df = engineer_features(pd.DataFrame([modified_dict]))
-
-        orig_prob = float(_predict_proba(original_df)[0])
-        mod_prob = float(_predict_proba(modified_df)[0])
-
-        latency_ms = (time.perf_counter() - t0) * 1000
-        _prediction_stats["total"] += 2
-
-        log.info(
-            "whatif → orig=%.3f mod=%.3f Δ=%.3f  %.1f ms",
-            orig_prob, mod_prob, mod_prob - orig_prob, latency_ms,
-        )
-
-        return WhatIfResponse(
-            original_probability=round(orig_prob, 4),
-            modified_probability=round(mod_prob, 4),
-            original_risk_tier=_risk_tier(orig_prob),
-            modified_risk_tier=_risk_tier(mod_prob),
-            overrides=overrides,
-            latency_ms=round(latency_ms, 2),
-        )
-
-    except Exception as exc:
-        log.error("whatif error: %s\n%s", exc, traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(exc))
+        orig = payload.base.dict()
+        mod  = {**orig, **payload.overrides}
+        op   = float(_predict_proba(_featurize(orig))[0])
+        mp   = float(_predict_proba(_featurize(mod))[0])
+        ms   = (time.perf_counter()-t0)*1000
+        log.info("whatif → orig=%.3f mod=%.3f Δ=%.3f  %.1fms", op, mp, mp-op, ms)
+        return WhatIfResponse(original_probability=round(op,4), modified_probability=round(mp,4),
+            original_risk_tier=_risk_tier(op), modified_risk_tier=_risk_tier(mp),
+            overrides=payload.overrides, latency_ms=round(ms,2))
+    except Exception as e:
+        log.error("whatif error: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(500, str(e))
 
 
 @app.post("/batch", response_model=BatchResponse, tags=["inference"])
 def batch_predict(req: BatchRequest):
-    """
-    Score a batch of customers in one API call.
-
-    Efficiently runs all records through the ensemble in a single forward pass.
-    Returns per-customer predictions plus an aggregate summary.
-
-    Limits
-    ------
-    Max 500 customers per request.
-    """
     t0 = time.perf_counter()
-    if len(req.customers) > 500:
-        raise HTTPException(status_code=400, detail="Max 500 customers per batch request")
-    if not req.customers:
-        raise HTTPException(status_code=400, detail="customers list is empty")
-
+    if len(req.customers) > 500: raise HTTPException(400, "Max 500 customers")
+    if not req.customers:        raise HTTPException(400, "Empty list")
     try:
-        raw_dicts = [c.dict() for c in req.customers]
-        raw_df = pd.DataFrame(raw_dicts)
-        feat_df = engineer_features(raw_df)
-
-        probs = _predict_proba(feat_df)
-        tiers = [_risk_tier(p) for p in probs]
-
-        results = [
-            {
-                "index": i,
-                "churn_probability": round(float(p), 4),
-                "churn_prediction": bool(p >= 0.5),
-                "risk_tier": t,
-            }
-            for i, (p, t) in enumerate(zip(probs, tiers))
-        ]
-
-        high = sum(1 for t in tiers if t == "High")
-        med = sum(1 for t in tiers if t == "Medium")
-        low = sum(1 for t in tiers if t == "Low")
-        total = len(results)
-
-        summary = {
-            "total": total,
-            "high_risk": high,
-            "medium_risk": med,
-            "low_risk": low,
-            "high_risk_pct": round(high / total * 100, 1),
-            "avg_churn_probability": round(float(probs.mean()), 4),
-        }
-
-        latency_ms = (time.perf_counter() - t0) * 1000
-        _prediction_stats["total"] += total
-
-        log.info(
-            "batch %d customers → high=%d med=%d low=%d  %.1f ms",
-            total, high, med, low, latency_ms,
-        )
-
-        return BatchResponse(results=results, summary=summary, latency_ms=round(latency_ms, 2))
-
-    except Exception as exc:
-        log.error("batch error: %s\n%s", exc, traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(exc))
+        feat_df = engineer_for_serving(pd.DataFrame([c.dict() for c in req.customers]), _feature_cols)
+        probs   = _predict_proba(feat_df)
+        tiers   = [_risk_tier(p) for p in probs]
+        results = [{"index":i,"churn_probability":round(float(p),4),
+                    "churn_prediction":bool(p>=_threshold),"risk_tier":t}
+                   for i,(p,t) in enumerate(zip(probs,tiers))]
+        h,m,l,n = (sum(1 for t in tiers if t==x) for x in ("High","Medium","Low")), len(results)
+        high,med,low = sum(1 for t in tiers if t=="High"), sum(1 for t in tiers if t=="Medium"), sum(1 for t in tiers if t=="Low")
+        ms = (time.perf_counter()-t0)*1000
+        log.info("batch %d → H=%d M=%d L=%d  %.1fms", len(results), high, med, low, ms)
+        return BatchResponse(results=results, latency_ms=round(ms,2), summary={
+            "total":len(results),"high_risk":high,"medium_risk":med,"low_risk":low,
+            "high_risk_pct":round(high/len(results)*100,1),
+            "avg_churn_probability":round(float(probs.mean()),4),"latency_ms":round(ms,2)})
+    except Exception as e:
+        log.error("batch error: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(500, str(e))
 
 
 @app.get("/dashboard", tags=["analytics"])
 def dashboard():
-    """
-    Aggregate analytics for the frontend dashboard.
-
-    Returns
-    -------
-    dict with:
-    - model_metrics   : OOF-level performance (AUC, F1, precision, recall, accuracy)
-    - risk_distribution: simulated population breakdown
-    - feature_importance: top features from the first fold booster
-    - prediction_stats : runtime prediction counts and latency
-    - model_health    : per-fold metrics derived from metadata
-    """
+    """Fix 3: all stats from real SQLite. Fix 4: real metrics from metadata.json."""
     try:
-        # ── feature importance from fold 0 ──
+        db     = _db_stats()
         scores = _models[0].get_booster().get_score(importance_type="gain")
-        total_gain = sum(scores.values()) or 1
-        fi = sorted(
-            [{"feature": k, "importance": round(v / total_gain, 5)} for k, v in scores.items()],
-            key=lambda x: -x["importance"],
-        )
-
-        # ── simulated risk distribution (replace with real DB query in prod) ──
-        rng = np.random.default_rng(42)
-        n_sim = 1000
-        probs_sim = rng.beta(1.5, 4.5, n_sim)
-        tiers_sim = [_risk_tier(p) for p in probs_sim]
-        high = sum(1 for t in tiers_sim if t == "High")
-        med = sum(1 for t in tiers_sim if t == "Medium")
-        low = sum(1 for t in tiers_sim if t == "Low")
-
-        # ── latency stats ──
-        lats = _prediction_stats["latencies_ms"]
-        avg_lat = float(np.mean(lats)) if lats else 0.0
-
-        # ── per-fold metrics from metadata ──
-        oof_auc = _metadata.get("oof_auc", 0.916)
-        fold_metrics = [
-            {
-                "fold": i + 1,
-                "roc_auc": round(oof_auc + np.random.default_rng(i).uniform(-0.015, 0.015), 4),
-                "precision": round(0.72 + np.random.default_rng(i + 10).uniform(-0.04, 0.04), 4),
-                "recall": round(0.78 + np.random.default_rng(i + 20).uniform(-0.04, 0.04), 4),
-                "f1": round(0.75 + np.random.default_rng(i + 30).uniform(-0.03, 0.03), 4),
-            }
-            for i in range(_metadata.get("n_folds", 5))
-        ]
-
+        tot    = sum(scores.values()) or 1
+        fi     = sorted([{"feature":k,"importance":round(v/tot,5)} for k,v in scores.items()],
+                        key=lambda x:-x["importance"])
+        total  = max(db["total"], 1)
         return {
             "model_metrics": {
-                "roc_auc": round(oof_auc, 4),
-                "precision": round(np.mean([f["precision"] for f in fold_metrics]), 4),
-                "recall": round(np.mean([f["recall"] for f in fold_metrics]), 4),
-                "f1": round(np.mean([f["f1"] for f in fold_metrics]), 4),
-                "accuracy": round(0.812, 4),
+                "roc_auc":           round(_metadata.get("oof_auc",0), 4),
+                "pr_auc":            round(_metadata.get("pr_auc",0), 4),
+                "precision":         round(_metadata.get("precision",0), 4),
+                "recall":            round(_metadata.get("recall",0), 4),
+                "f1":                round(_metadata.get("f1",0), 4),
+                "f2":                round(_metadata.get("f2",0), 4),
+                "accuracy":          round(_metadata.get("accuracy",0), 4),
+                "optimal_threshold": round(_metadata.get("optimal_threshold",0.5), 4),
             },
             "risk_distribution": {
-                "high": high, "medium": med, "low": low,
-                "high_pct": round(high / n_sim * 100, 1),
-                "medium_pct": round(med / n_sim * 100, 1),
-                "low_pct": round(low / n_sim * 100, 1),
+                "high":db["high"],"medium":db["medium"],"low":db["low"],"total":db["total"],
+                "high_pct":  round(db["high"]/total*100,1),
+                "medium_pct":round(db["medium"]/total*100,1),
+                "low_pct":   round(db["low"]/total*100,1),
             },
             "feature_importance": fi[:15],
             "prediction_stats": {
-                "total": _prediction_stats["total"],
-                "avg_latency_ms": round(avg_lat, 2),
+                "total":db["total"],"avg_latency_ms":db["avg_latency_ms"],
+                "avg_churn_prob":db["avg_churn_prob"],"recent":db["recent"],
             },
             "model_health": {
-                "status": "healthy",
-                "n_folds": _metadata.get("n_folds", 5),
-                "fold_metrics": fold_metrics,
+                "status":"healthy","n_folds":_metadata.get("n_folds",5),
+                "fold_metrics":_metadata.get("fold_metrics",[]),
+                "optimal_threshold":_metadata.get("optimal_threshold",0.5),
             },
         }
+    except Exception as e:
+        log.error("dashboard error: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(500, str(e))
 
-    except Exception as exc:
-        log.error("dashboard error: %s\n%s", exc, traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
-# ─── Global exception handler ─────────────────────────────────────────────────
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    log.error("Unhandled exception on %s: %s", request.url.path, exc)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error — check logs for details"},
-    )
+async def global_exc(request: Request, exc: Exception):
+    log.error("Unhandled on %s: %s", request.url.path, exc)
+    return JSONResponse(500, {"detail": "Internal server error"})

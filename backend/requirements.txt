@@ -1,24 +1,27 @@
-# ChurnGuard backend dependencies
-# Pin major versions to avoid breaking changes on Render deploy
+# ChurnGuard API — requirements.txt
+# ──────────────────────────────────────────────────────────────
+# Fix: shap uncommented — was commented out, SHAP never ran
+# Fix: mlflow added for experiment tracking
+# Fix: ruff + pytest added for CI
 
+# Core API
 fastapi==0.111.0
 uvicorn[standard]==0.29.0
-gunicorn==22.0.0
-pydantic==2.7.1
+pydantic==1.10.15
 
 # ML
 xgboost==2.0.3
-numpy==1.26.4
 scikit-learn==1.4.2
+joblib==1.4.0
+numpy==1.26.4
 pandas==2.2.2
-joblib==1.4.2
+shap==0.45.0          # Fix 2: was commented out — now required for real SHAP
 
-# Serialisation
-python-multipart==0.0.9
+# Experiment tracking
+mlflow==2.12.2         # Fix 5: added
 
-# Dev / testing
-pytest==8.2.0
-httpx==0.27.0        # required by FastAPI TestClient
-
-# Optional — uncomment for true SHAP explanations
-# shap==0.45.0
+# Dev / CI
+ruff==0.4.4            # Fix 7: linter used in GitHub Actions
+pytest==8.2.0          # Fix 7: test runner
+pytest-cov==5.0.0
+httpx==0.27.0          # for async FastAPI test client
