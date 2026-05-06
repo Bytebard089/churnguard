@@ -284,7 +284,7 @@ if __name__ == "__main__":
 
     errors = validate_input(sample)
     if errors:
-        print(f"\n  [!] Validation errors:\n    " + "\n    ".join(errors))
+        print("\n  [!] Validation errors:\n    " + "\n    ".join(errors))
         sys.exit(1)
     print("  [✓] Validation passed")
 

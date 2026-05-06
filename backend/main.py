@@ -9,20 +9,31 @@ Fixes vs v2.0:
 """
 from __future__ import annotations
 
-import json, logging, os, sqlite3, time, traceback
+import json
+import logging
+import os
+import sqlite3
+import time
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Union
 
-import joblib, numpy as np, pandas as pd, shap
+import joblib
+import numpy as np
+import pandas as pd
+import shap
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
-logging.basicConfig(level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s", datefmt="%H:%M:%S")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
+    datefmt="%H:%M:%S",
+)
 log = logging.getLogger("churnguard")
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -45,7 +56,8 @@ _threshold:    float     = 0.5
 # ─── Fix 3: SQLite ────────────────────────────────────────────────────────────
 def _init_db() -> None:
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS predictions (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts           REAL    NOT NULL,
@@ -58,7 +70,8 @@ def _init_db() -> None:
                 monthly_chg  REAL,
                 internet_svc TEXT
             )
-        """)
+            """
+        )
         conn.commit()
     log.info("SQLite DB ready at %s", DB_PATH)
 
@@ -69,32 +82,64 @@ def _log_prediction(prob, pred, tier, latency_ms, cust):
             conn.execute(
                 "INSERT INTO predictions (ts,churn_prob,churn_pred,risk_tier,latency_ms,"
                 "contract,tenure,monthly_chg,internet_svc) VALUES (?,?,?,?,?,?,?,?,?)",
-                (time.time(), round(prob,4), int(pred), tier, round(latency_ms,2),
-                 cust.get("Contract"), cust.get("tenure"),
-                 cust.get("MonthlyCharges"), cust.get("InternetService")),
+                (
+                    time.time(),
+                    round(prob, 4),
+                    int(pred),
+                    tier,
+                    round(latency_ms, 2),
+                    cust.get("Contract"),
+                    cust.get("tenure"),
+                    cust.get("MonthlyCharges"),
+                    cust.get("InternetService"),
+                ),
             )
             conn.commit()
-    except Exception as e:
-        log.warning("DB log failed: %s", e)
+    except Exception as exc:
+        log.warning("DB log failed: %s", exc)
 
 
 def _db_stats() -> dict:
     try:
         with sqlite3.connect(DB_PATH) as conn:
             c = conn.cursor()
-            c.execute("SELECT COUNT(*) FROM predictions"); total  = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM predictions WHERE risk_tier='High'");   high   = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM predictions WHERE risk_tier='Medium'"); medium = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM predictions WHERE risk_tier='Low'");    low    = c.fetchone()[0]
-            c.execute("SELECT AVG(latency_ms) FROM predictions"); avg_lat  = c.fetchone()[0] or 0.0
-            c.execute("SELECT AVG(churn_prob) FROM predictions"); avg_prob = c.fetchone()[0] or 0.0
+            c.execute("SELECT COUNT(*) FROM predictions")
+            total = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM predictions WHERE risk_tier='High'")
+            high = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM predictions WHERE risk_tier='Medium'")
+            medium = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM predictions WHERE risk_tier='Low'")
+            low = c.fetchone()[0]
+            c.execute("SELECT AVG(latency_ms) FROM predictions")
+            avg_lat = c.fetchone()[0] or 0.0
+            c.execute("SELECT AVG(churn_prob) FROM predictions")
+            avg_prob = c.fetchone()[0] or 0.0
             c.execute("SELECT ts,churn_prob,risk_tier FROM predictions ORDER BY ts DESC LIMIT 20")
-            recent = [{"ts":r[0],"churn_prob":r[1],"risk_tier":r[2]} for r in c.fetchall()]
-        return {"total":total,"high":high,"medium":medium,"low":low,
-                "avg_latency_ms":round(avg_lat,2),"avg_churn_prob":round(avg_prob,4),"recent":recent}
-    except Exception as e:
-        log.warning("DB stats failed: %s", e)
-        return {"total":0,"high":0,"medium":0,"low":0,"avg_latency_ms":0,"avg_churn_prob":0,"recent":[]}
+            recent = [
+                {"ts": r[0], "churn_prob": r[1], "risk_tier": r[2]}
+                for r in c.fetchall()
+            ]
+        return {
+            "total": total,
+            "high": high,
+            "medium": medium,
+            "low": low,
+            "avg_latency_ms": round(avg_lat, 2),
+            "avg_churn_prob": round(avg_prob, 4),
+            "recent": recent,
+        }
+    except Exception as exc:
+        log.warning("DB stats failed: %s", exc)
+        return {
+            "total": 0,
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+            "avg_latency_ms": 0,
+            "avg_churn_prob": 0,
+            "recent": [],
+        }
 
 
 # ─── Lifespan ─────────────────────────────────────────────────────────────────
@@ -117,24 +162,38 @@ async def lifespan(app: FastAPI):
 
 
 # ─── App ──────────────────────────────────────────────────────────────────────
-app = FastAPI(title="ChurnGuard API", version="3.0.0", lifespan=lifespan,
-    description="5-fold XGBoost churn prediction. Fixes: real SHAP, SQLite, calibrated threshold.")
+app = FastAPI(
+    title="ChurnGuard API",
+    version="3.0.0",
+    lifespan=lifespan,
+    description="5-fold XGBoost churn prediction. Fixes: real SHAP, SQLite, calibrated threshold.",
+)
 
 ALLOWED_ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
     "https://churnguard-ten.vercel.app,http://localhost:5173,http://localhost:3000",
 ).split(",")
 
-app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     t0 = time.perf_counter()
     response = await call_next(request)
-    log.info("%s %s → %d  (%.1f ms)", request.method, request.url.path,
-             response.status_code, (time.perf_counter()-t0)*1000)
+    log.info(
+        "%s %s → %d  (%.1f ms)",
+        request.method,
+        request.url.path,
+        response.status_code,
+        (time.perf_counter() - t0) * 1000,
+    )
     return response
 
 
@@ -162,7 +221,8 @@ class CustomerInput(BaseModel):
 
     @validator("gender")
     def v_gender(cls, v):
-        if v not in ("Male","Female"): raise ValueError("gender must be Male or Female")
+        if v not in ("Male", "Female"):
+            raise ValueError("gender must be Male or Female")
         return v
 
     @validator("Contract")
@@ -173,8 +233,10 @@ class CustomerInput(BaseModel):
 
     @validator("SeniorCitizen", pre=True)
     def v_senior(cls, v):
-        if v in (1,"1","Yes"): return "Yes"
-        if v in (0,"0","No"):  return "No"
+        if v in (1, "1", "Yes"):
+            return "Yes"
+        if v in (0, "0", "No"):
+            return "No"
         raise ValueError("SeniorCitizen must be 0/1/Yes/No")
 
 
@@ -264,35 +326,182 @@ def health_check():
 
 @app.get("/sample", tags=["utils"])
 def get_sample():
-    try:    return json.loads(SAMPLE_PATH.read_text())
-    except Exception as e: raise HTTPException(500, str(e))
+    try:
+        return json.loads(SAMPLE_PATH.read_text())
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
 
 
 @app.get("/features", tags=["utils"])
 def get_features():
-    try:    sample = json.loads(SAMPLE_PATH.read_text())
-    except: sample = {}
-    d = lambda k, fb=None: sample.get(k, fb)
+    try:
+        sample = json.loads(SAMPLE_PATH.read_text())
+    except Exception:
+        sample = {}
+
+    def _default(key, fallback=None):
+        return sample.get(key, fallback)
+
     return [
-        {"field":"tenure","label":"Tenure (months)","type":"number","group":"Account","min":0,"max":120,"default":d("tenure")},
-        {"field":"Contract","label":"Contract","type":"select","group":"Account","options":["Month-to-month","One year","Two year"],"default":d("Contract")},
-        {"field":"PaperlessBilling","label":"Paperless Billing","type":"select","group":"Account","options":["Yes","No"],"default":d("PaperlessBilling")},
-        {"field":"PaymentMethod","label":"Payment Method","type":"select","group":"Account","options":["Electronic check","Mailed check","Bank transfer (automatic)","Credit card (automatic)"],"default":d("PaymentMethod")},
-        {"field":"MonthlyCharges","label":"Monthly Charges","type":"number","group":"Charges","min":0,"max":500,"default":d("MonthlyCharges")},
-        {"field":"TotalCharges","label":"Total Charges","type":"number","group":"Charges","min":0,"default":d("TotalCharges")},
-        {"field":"gender","label":"Gender","type":"select","group":"Demographics","options":["Male","Female"],"default":d("gender")},
-        {"field":"SeniorCitizen","label":"Senior Citizen","type":"select","group":"Demographics","options":["Yes","No"],"default":d("SeniorCitizen")},
-        {"field":"Partner","label":"Partner","type":"select","group":"Demographics","options":["Yes","No"],"default":d("Partner")},
-        {"field":"Dependents","label":"Dependents","type":"select","group":"Demographics","options":["Yes","No"],"default":d("Dependents")},
-        {"field":"PhoneService","label":"Phone Service","type":"select","group":"Services","options":["Yes","No"],"default":d("PhoneService")},
-        {"field":"MultipleLines","label":"Multiple Lines","type":"select","group":"Services","options":["Yes","No","No phone service"],"default":d("MultipleLines")},
-        {"field":"InternetService","label":"Internet Service","type":"select","group":"Services","options":["DSL","Fiber optic","No"],"default":d("InternetService")},
-        {"field":"OnlineSecurity","label":"Online Security","type":"select","group":"Services","options":["Yes","No","No internet service"],"default":d("OnlineSecurity")},
-        {"field":"OnlineBackup","label":"Online Backup","type":"select","group":"Services","options":["Yes","No","No internet service"],"default":d("OnlineBackup")},
-        {"field":"DeviceProtection","label":"Device Protection","type":"select","group":"Services","options":["Yes","No","No internet service"],"default":d("DeviceProtection")},
-        {"field":"TechSupport","label":"Tech Support","type":"select","group":"Services","options":["Yes","No","No internet service"],"default":d("TechSupport")},
-        {"field":"StreamingTV","label":"Streaming TV","type":"select","group":"Services","options":["Yes","No","No internet service"],"default":d("StreamingTV")},
-        {"field":"StreamingMovies","label":"Streaming Movies","type":"select","group":"Services","options":["Yes","No","No internet service"],"default":d("StreamingMovies")},
+        {
+            "field": "tenure",
+            "label": "Tenure (months)",
+            "type": "number",
+            "group": "Account",
+            "min": 0,
+            "max": 120,
+            "default": _default("tenure"),
+        },
+        {
+            "field": "Contract",
+            "label": "Contract",
+            "type": "select",
+            "group": "Account",
+            "options": ["Month-to-month", "One year", "Two year"],
+            "default": _default("Contract"),
+        },
+        {
+            "field": "PaperlessBilling",
+            "label": "Paperless Billing",
+            "type": "select",
+            "group": "Account",
+            "options": ["Yes", "No"],
+            "default": _default("PaperlessBilling"),
+        },
+        {
+            "field": "PaymentMethod",
+            "label": "Payment Method",
+            "type": "select",
+            "group": "Account",
+            "options": [
+                "Electronic check",
+                "Mailed check",
+                "Bank transfer (automatic)",
+                "Credit card (automatic)",
+            ],
+            "default": _default("PaymentMethod"),
+        },
+        {
+            "field": "MonthlyCharges",
+            "label": "Monthly Charges",
+            "type": "number",
+            "group": "Charges",
+            "min": 0,
+            "max": 500,
+            "default": _default("MonthlyCharges"),
+        },
+        {
+            "field": "TotalCharges",
+            "label": "Total Charges",
+            "type": "number",
+            "group": "Charges",
+            "min": 0,
+            "default": _default("TotalCharges"),
+        },
+        {
+            "field": "gender",
+            "label": "Gender",
+            "type": "select",
+            "group": "Demographics",
+            "options": ["Male", "Female"],
+            "default": _default("gender"),
+        },
+        {
+            "field": "SeniorCitizen",
+            "label": "Senior Citizen",
+            "type": "select",
+            "group": "Demographics",
+            "options": ["Yes", "No"],
+            "default": _default("SeniorCitizen"),
+        },
+        {
+            "field": "Partner",
+            "label": "Partner",
+            "type": "select",
+            "group": "Demographics",
+            "options": ["Yes", "No"],
+            "default": _default("Partner"),
+        },
+        {
+            "field": "Dependents",
+            "label": "Dependents",
+            "type": "select",
+            "group": "Demographics",
+            "options": ["Yes", "No"],
+            "default": _default("Dependents"),
+        },
+        {
+            "field": "PhoneService",
+            "label": "Phone Service",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No"],
+            "default": _default("PhoneService"),
+        },
+        {
+            "field": "MultipleLines",
+            "label": "Multiple Lines",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No phone service"],
+            "default": _default("MultipleLines"),
+        },
+        {
+            "field": "InternetService",
+            "label": "Internet Service",
+            "type": "select",
+            "group": "Services",
+            "options": ["DSL", "Fiber optic", "No"],
+            "default": _default("InternetService"),
+        },
+        {
+            "field": "OnlineSecurity",
+            "label": "Online Security",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No internet service"],
+            "default": _default("OnlineSecurity"),
+        },
+        {
+            "field": "OnlineBackup",
+            "label": "Online Backup",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No internet service"],
+            "default": _default("OnlineBackup"),
+        },
+        {
+            "field": "DeviceProtection",
+            "label": "Device Protection",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No internet service"],
+            "default": _default("DeviceProtection"),
+        },
+        {
+            "field": "TechSupport",
+            "label": "Tech Support",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No internet service"],
+            "default": _default("TechSupport"),
+        },
+        {
+            "field": "StreamingTV",
+            "label": "Streaming TV",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No internet service"],
+            "default": _default("StreamingTV"),
+        },
+        {
+            "field": "StreamingMovies",
+            "label": "Streaming Movies",
+            "type": "select",
+            "group": "Services",
+            "options": ["Yes", "No", "No internet service"],
+            "default": _default("StreamingMovies"),
+        },
     ]
 
 
@@ -340,8 +549,10 @@ def what_if(payload: WhatIfRequest):
 @app.post("/batch", response_model=BatchResponse, tags=["inference"])
 def batch_predict(req: BatchRequest):
     t0 = time.perf_counter()
-    if len(req.customers) > 500: raise HTTPException(400, "Max 500 customers")
-    if not req.customers:        raise HTTPException(400, "Empty list")
+    if len(req.customers) > 500:
+        raise HTTPException(400, "Max 500 customers")
+    if not req.customers:
+        raise HTTPException(400, "Empty list")
     try:
         feat_df = engineer_for_serving(pd.DataFrame([c.dict() for c in req.customers]), _feature_cols)
         probs   = _predict_proba(feat_df)
@@ -349,8 +560,9 @@ def batch_predict(req: BatchRequest):
         results = [{"index":i,"churn_probability":round(float(p),4),
                     "churn_prediction":bool(p>=_threshold),"risk_tier":t}
                    for i,(p,t) in enumerate(zip(probs,tiers))]
-        h,m,l,n = (sum(1 for t in tiers if t==x) for x in ("High","Medium","Low")), len(results)
-        high,med,low = sum(1 for t in tiers if t=="High"), sum(1 for t in tiers if t=="Medium"), sum(1 for t in tiers if t=="Low")
+        high = sum(1 for t in tiers if t == "High")
+        med = sum(1 for t in tiers if t == "Medium")
+        low = sum(1 for t in tiers if t == "Low")
         ms = (time.perf_counter()-t0)*1000
         log.info("batch %d → H=%d M=%d L=%d  %.1fms", len(results), high, med, low, ms)
         return BatchResponse(results=results, latency_ms=round(ms,2), summary={
@@ -366,12 +578,14 @@ def batch_predict(req: BatchRequest):
 def dashboard():
     """Fix 3: all stats from real SQLite. Fix 4: real metrics from metadata.json."""
     try:
-        db     = _db_stats()
+        db = _db_stats()
         scores = _models[0].get_booster().get_score(importance_type="gain")
-        tot    = sum(scores.values()) or 1
-        fi     = sorted([{"feature":k,"importance":round(v/tot,5)} for k,v in scores.items()],
-                        key=lambda x:-x["importance"])
-        total  = max(db["total"], 1)
+        tot = sum(scores.values()) or 1
+        fi = sorted(
+            [{"feature": k, "importance": round(v / tot, 5)} for k, v in scores.items()],
+            key=lambda x: -x["importance"],
+        )
+        total = max(db["total"], 1)
         return {
             "model_metrics": {
                 "roc_auc":           round(_metadata.get("oof_auc",0), 4),

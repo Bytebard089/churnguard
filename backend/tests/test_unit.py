@@ -6,10 +6,13 @@
 #            schema validation, SQLite helpers.
 # ─────────────────────────────────────────────────────────────────
 
-import sys, json, sqlite3, tempfile, os
+import json
+import os
+import sqlite3
+import sys
+import tempfile
 from pathlib import Path
 
-import numpy  as np
 import pandas as pd
 import pytest
 
@@ -17,7 +20,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "core"))
 
-from core.features import preprocess, engineer, align_columns, engineer_for_serving
+from core.features import preprocess, engineer, align_columns
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -255,7 +258,7 @@ class TestAlignColumns:
     def test_output_dtype_float(self):
         df = pd.DataFrame({"a": [1], "b": [2]})
         result = align_columns(df, ["a", "b"])
-        assert result.dtypes["a"] == float
+        assert pd.api.types.is_float_dtype(result.dtypes["a"])
 
 
 # ══════════════════════════════════════════════
@@ -268,14 +271,29 @@ class TestRiskTier:
     def _tier(self, p: float) -> str:
         return "High" if p >= 0.65 else "Medium" if p >= 0.35 else "Low"
 
-    def test_high_at_065(self):      assert self._tier(0.65) == "High"
-    def test_high_at_090(self):      assert self._tier(0.90) == "High"
-    def test_medium_at_035(self):    assert self._tier(0.35) == "Medium"
-    def test_medium_at_064(self):    assert self._tier(0.64) == "Medium"
-    def test_low_at_034(self):       assert self._tier(0.34) == "Low"
-    def test_low_at_0(self):         assert self._tier(0.00) == "Low"
-    def test_boundary_high_med(self):assert self._tier(0.649) == "Medium"
-    def test_boundary_med_low(self): assert self._tier(0.349) == "Low"
+    def test_high_at_065(self):
+        assert self._tier(0.65) == "High"
+
+    def test_high_at_090(self):
+        assert self._tier(0.90) == "High"
+
+    def test_medium_at_035(self):
+        assert self._tier(0.35) == "Medium"
+
+    def test_medium_at_064(self):
+        assert self._tier(0.64) == "Medium"
+
+    def test_low_at_034(self):
+        assert self._tier(0.34) == "Low"
+
+    def test_low_at_0(self):
+        assert self._tier(0.00) == "Low"
+
+    def test_boundary_high_med(self):
+        assert self._tier(0.649) == "Medium"
+
+    def test_boundary_med_low(self):
+        assert self._tier(0.349) == "Low"
 
 
 # ══════════════════════════════════════════════

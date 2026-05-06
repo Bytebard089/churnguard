@@ -10,7 +10,6 @@ Requires the backend to be importable (run from `backend/` directory).
 Uses FastAPI's TestClient — no live server needed.
 """
 
-import json
 import pytest
 from fastapi.testclient import TestClient
 

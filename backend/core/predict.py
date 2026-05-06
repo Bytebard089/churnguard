@@ -7,19 +7,13 @@ then generates a SHAP explanation using the last fold's model
 """
 
 import json
-import shap
 import joblib
 import numpy as np
-import pandas as pd
+import shap
 from pathlib import Path
 from dataclasses import dataclass, asdict
 
-from .preprocessing import (
-    preprocess, validate_input,
-    get_feature_columns, get_metadata,
-    basic_preprocess, engineer_features,
-    REQUIRED_CATEGORICAL, REQUIRED_NUMERIC
-)
+from .preprocessing import preprocess, validate_input, get_feature_columns
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 MODELS_DIR      = Path(__file__).resolve().parent.parent / "models"
@@ -275,7 +269,7 @@ if __name__ == "__main__":
     print(f"  Risk tier          : {result['risk_tier']}")
     print(f"  Confidence         : {result['confidence']}")
     print(f"  Fold probs         : {result['fold_probabilities']}")
-    print(f"\n  Top SHAP drivers:")
+    print("\n  Top SHAP drivers:")
     for s in result["shap_values"][:5]:
         if "error" in s:
             print(f"    [!] {s['error']}")
