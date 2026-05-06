@@ -12,6 +12,9 @@ import { getDashboard } from '../api/client'
 const COLORS = { high:'#ff6b6b', med:'#ffd166', low:'#06d6a0', accent:'#6c8eff', purple:'#a78bfa' }
 const fmtPct = v => `${(v*100).toFixed(1)}%`
 const fmtMs  = v => `${Number(v).toFixed(0)} ms`
+const isNumber = v => typeof v === 'number' && !Number.isNaN(v)
+const fmtPctSafe = v => (isNumber(v) ? fmtPct(v) : '—')
+const metricColorSafe = v => (isNumber(v) ? (v>=0.85?COLORS.low:v>=0.75?COLORS.med:COLORS.high) : 'var(--text-muted)')
 
 const DEMO_DATA = {
   model_metrics:{ roc_auc:0.9165, precision:0.832, recall:0.781, f1:0.805, accuracy:0.812 },
@@ -353,9 +356,14 @@ export default function DashboardPage({ predictionHistory = [] }) {
                   onMouseEnter={e=>e.currentTarget.style.background='var(--bg-elevated)'}
                   onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                   <td style={{ padding:'0.625rem 0.75rem', fontFamily:'var(--font-mono)', color:'var(--text-muted)' }}>Fold {i+1}</td>
-                  {['roc_auc','precision','recall','f1'].map(k=>(
-                    <td key={k} style={{ padding:'0.625rem 0.75rem', fontFamily:'var(--font-mono)', fontWeight:600, color:metricColor(row[k]) }}>{fmtPct(row[k])}</td>
-                  ))}
+                  {['roc_auc','precision','recall','f1'].map(k=>{
+                    const val = row[k]
+                    return (
+                      <td key={k} style={{ padding:'0.625rem 0.75rem', fontFamily:'var(--font-mono)', fontWeight:600, color:metricColorSafe(val) }}>
+                        {fmtPctSafe(val)}
+                      </td>
+                    )
+                  })}
                   <td style={{ padding:'0.625rem 0.75rem' }}>
                     <span style={{ fontSize:'0.68rem', padding:'0.15rem 0.5rem', borderRadius:'99px', background:row.roc_auc>=0.91?'var(--risk-low-bg)':'var(--risk-med-bg)', color:row.roc_auc>=0.91?'var(--risk-low)':'var(--risk-med)', fontWeight:700 }}>
                       {row.roc_auc>=0.91?'Excellent':'Good'}
@@ -366,10 +374,21 @@ export default function DashboardPage({ predictionHistory = [] }) {
               <tr style={{ borderTop:'2px solid var(--border-bright)', background:'var(--bg-elevated)' }}>
                 <td style={{ padding:'0.625rem 0.75rem', fontWeight:700 }}>Mean ± Std</td>
                 {['roc_auc','precision','recall','f1'].map(k=>{
-                  const vals = model_health.fold_metrics.map(r=>r[k])
+                  const vals = model_health.fold_metrics.map(r=>r[k]).filter(isNumber)
+                  if (!vals.length) {
+                    return (
+                      <td key={k} style={{ padding:'0.625rem 0.75rem', fontFamily:'var(--font-mono)', fontWeight:800, color:'var(--text-muted)' }}>
+                        —
+                      </td>
+                    )
+                  }
                   const mean = vals.reduce((a,b)=>a+b,0)/vals.length
                   const std  = Math.sqrt(vals.reduce((a,b)=>a+(b-mean)**2,0)/vals.length)
-                  return <td key={k} style={{ padding:'0.625rem 0.75rem', fontFamily:'var(--font-mono)', fontWeight:800, color:'var(--accent)' }}>{fmtPct(mean)} <span style={{ fontSize:'0.65rem', color:'var(--text-muted)' }}>±{(std*100).toFixed(2)}</span></td>
+                  return (
+                    <td key={k} style={{ padding:'0.625rem 0.75rem', fontFamily:'var(--font-mono)', fontWeight:800, color:'var(--accent)' }}>
+                      {fmtPct(mean)} <span style={{ fontSize:'0.65rem', color:'var(--text-muted)' }}>±{(std*100).toFixed(2)}</span>
+                    </td>
+                  )
                 })}
                 <td />
               </tr>
