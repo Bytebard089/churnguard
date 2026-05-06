@@ -120,7 +120,14 @@ class TestEngineer:
         assert row["service_count"] == 3
 
     def test_no_internet_service_treated_as_no(self):
-        row = self._eng(OnlineSecurity="No internet service")
+        row = self._eng(
+            OnlineSecurity="No internet service",
+            OnlineBackup="No internet service",
+            DeviceProtection="No internet service",
+            TechSupport="No internet service",
+            StreamingTV="No internet service",
+            StreamingMovies="No internet service",
+        )
         assert row["service_count"] == 0
 
     def test_autopay_true_for_bank_transfer(self):
@@ -386,7 +393,13 @@ class TestMetadataSchema:
             "precision": 0.832, "recall": 0.781,
             "f1": 0.805, "f2": 0.789, "accuracy": 0.812,
             "confusion_matrix": {"tp": 520, "fp": 142, "fn": 118, "tn": 1124},
-            "fold_metrics": [{"fold": 1, "roc_auc": 0.914, "best_iter": 3200}],
+            "fold_metrics": [
+                {"fold": 1, "roc_auc": 0.914, "best_iter": 3200},
+                {"fold": 2, "roc_auc": 0.917, "best_iter": 3100},
+                {"fold": 3, "roc_auc": 0.913, "best_iter": 3050},
+                {"fold": 4, "roc_auc": 0.918, "best_iter": 3150},
+                {"fold": 5, "roc_auc": 0.916, "best_iter": 3250},
+            ],
             "saved_at": "2025-01-01T12:00:00",
             "scale_pos_weight": 3.441,
         }
