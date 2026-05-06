@@ -22,7 +22,6 @@ from typing import Any, Union
 import joblib
 import numpy as np
 import pandas as pd
-import shap
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -51,6 +50,7 @@ _metadata:     dict      = {}
 _feature_cols: list[str] = []
 _explainer:    Any       = None
 _threshold:    float     = 0.5
+_shap_enabled: bool      = os.getenv("SHAP_ENABLED", "1") == "1"
 
 
 # ─── Fix 3: SQLite ────────────────────────────────────────────────────────────
@@ -153,9 +153,10 @@ async def lifespan(app: FastAPI):
     _threshold    = float(_metadata.get("optimal_threshold", 0.5))  # Fix 4
     log.info("Loaded %d models | %d features | OOF AUC %.4f | threshold %.3f",
              len(_models), len(_feature_cols), _metadata.get("oof_auc",0), _threshold)
-    log.info("Building SHAP explainer …")
-    _explainer = shap.TreeExplainer(_models[0])   # Fix 2
-    log.info("SHAP ready")
+    if _shap_enabled:
+        log.info("SHAP enabled (lazy init)")
+    else:
+        log.info("SHAP disabled (SHAP_ENABLED=0)")
     _init_db()                                     # Fix 3
     yield
     log.info("Shutdown.")
@@ -291,10 +292,34 @@ def _risk_tier(p: float) -> str:
     return "High" if p >= 0.65 else "Medium" if p >= 0.35 else "Low"
 
 
+def _build_explainer() -> Any:
+    global _explainer
+    if _explainer is None:
+        import shap  # lazy import to reduce startup memory
+
+        _explainer = shap.TreeExplainer(_models[0])
+    return _explainer
+
+
+def _gain_fallback(n: int) -> list[dict]:
+    scores = _models[0].get_booster().get_score(importance_type="gain")
+    total = sum(scores.values()) or 1
+    return sorted(
+        [
+            {"feature": k, "shap_val": round(v / total, 5), "direction": "increases_churn", "value": 0.0}
+            for k, v in scores.items()
+        ],
+        key=lambda x: -abs(x["shap_val"]),
+    )[:n]
+
+
 def _get_shap(feat_df: pd.DataFrame, n: int = 8) -> list[dict]:
     """Fix 2: real per-prediction Shapley values from shap.TreeExplainer."""
+    if not _shap_enabled:
+        return _gain_fallback(n)
     try:
-        sv   = _explainer.shap_values(feat_df)[0]   # shape: (n_features,)
+        explainer = _build_explainer()
+        sv   = explainer.shap_values(feat_df)[0]   # shape: (n_features,)
         out  = [
             {"feature":   name.replace("_"," "),
              "shap_val":  round(float(v), 5),
@@ -306,12 +331,7 @@ def _get_shap(feat_df: pd.DataFrame, n: int = 8) -> list[dict]:
         return out[:n]
     except Exception as e:
         log.warning("SHAP failed, using gain fallback: %s", e)
-        scores = _models[0].get_booster().get_score(importance_type="gain")
-        total  = sum(scores.values()) or 1
-        return sorted([{"feature":k,"shap_val":round(v/total,5),
-                        "direction":"increases_churn","value":0.0}
-                       for k,v in scores.items()],
-                      key=lambda x:-abs(x["shap_val"]))[:n]
+        return _gain_fallback(n)
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
