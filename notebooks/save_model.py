@@ -116,6 +116,7 @@ oof_preds     = np.zeros(len(X))
 test_preds    = np.zeros(len(X_test))
 fold_models   = []          # FIX: collect each fold model
 fold_metrics_list = []
+fold_val_cache = []
 
 # ── Fix 5: MLflow tracking ────────────────────────────────────────────────────
 mlflow.set_experiment("churnguard_xgboost")
@@ -138,6 +139,7 @@ with mlflow.start_run(run_name=f"5fold_{datetime.now().strftime('%Y%m%d_%H%M')}"
         fold_models.append(model)   # FIX: save fold model
         fauc = roc_auc_score(y_va, val_pred)
         fold_metrics_list.append({"fold":fold,"roc_auc":round(fauc,5),"best_iter":model.best_iteration})
+        fold_val_cache.append((y_va.to_numpy(), val_pred))
         print(f"Fold {fold}  AUC={fauc:.5f}  best_iter={model.best_iteration}")
 
     # ── OOF metrics ──────────────────────────────────────────────────────
@@ -169,6 +171,15 @@ with mlflow.start_run(run_name=f"5fold_{datetime.now().strftime('%Y%m%d_%H%M')}"
     tn,fp_n,fn,tp = confusion_matrix(y,fp_).ravel()
     print(f"\nAt threshold {optimal_threshold:.2f}: P={prec:.4f} R={rec:.4f} F1={f1_v:.4f} F2={f2_v:.4f} Acc={acc:.4f}")
     print(f"  TP={tp}  FP={fp_n}  FN={fn}  TN={tn}")
+
+    # ── Per-fold metrics at the chosen threshold ───────────────────────
+    for i, (y_true, y_pred) in enumerate(fold_val_cache):
+        fold_bin = (y_pred >= optimal_threshold).astype(int)
+        fold_metrics_list[i].update({
+            "precision": round(precision_score(y_true, fold_bin, zero_division=0), 5),
+            "recall":    round(recall_score(y_true, fold_bin, zero_division=0), 5),
+            "f1":        round(f1_score(y_true, fold_bin, zero_division=0), 5),
+        })
 
     # ── Log to MLflow ─────────────────────────────────────────────────────
     mlflow.log_metrics({"oof_roc_auc":round(oof_auc,5),"oof_pr_auc":round(pr_auc,5),

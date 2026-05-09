@@ -63,30 +63,45 @@
     {
       "fold": 1,
       "roc_auc": 0.91611,
-      "best_iter": 8219
+      "best_iter": 8219,
+      "precision": 0.5133,
+      "recall": 0.92273,
+      "f1": 0.65965
     },
     {
       "fold": 2,
       "roc_auc": 0.9172,
-      "best_iter": 8028
+      "best_iter": 8028,
+      "precision": 0.51116,
+      "recall": 0.92594,
+      "f1": 0.65869
     },
     {
       "fold": 3,
       "roc_auc": 0.91656,
-      "best_iter": 8977
+      "best_iter": 8977,
+      "precision": 0.5136,
+      "recall": 0.92258,
+      "f1": 0.65986
     },
     {
       "fold": 4,
       "roc_auc": 0.91762,
-      "best_iter": 8029
+      "best_iter": 8029,
+      "precision": 0.51729,
+      "recall": 0.92467,
+      "f1": 0.66343
     },
     {
       "fold": 5,
       "roc_auc": 0.91498,
-      "best_iter": 7891
+      "best_iter": 7891,
+      "precision": 0.51103,
+      "recall": 0.91914,
+      "f1": 0.65686
     }
   ],
-  "saved_at": "2026-05-05T19:43:32.438717",
+  "saved_at": "2026-05-09T10:23:27.262018",
   "raw_numeric_cols": [
     "tenure",
     "MonthlyCharges",
