@@ -17,7 +17,7 @@ const fmtPctSafe = v => (isNumber(v) ? fmtPct(v) : '—')
 const metricColorSafe = v => (isNumber(v) ? (v>=0.85?COLORS.low:v>=0.75?COLORS.med:COLORS.high) : 'var(--text-muted)')
 
 const DEMO_DATA = {
-  model_metrics:{ roc_auc:0.9165, precision:0.832, recall:0.781, f1:0.805, accuracy:0.812 },
+  model_metrics:{ roc_auc:0.916485, precision:0.513269, recall:0.923014, f1:0.659695, accuracy:0.78554 },
   risk_distribution:{ high:180, medium:320, low:500, high_pct:18, medium_pct:32, low_pct:50 },
   feature_importance:[
     {feature:'Contract Month-to-month',importance:0.1821},{feature:'tenure',importance:0.1432},
@@ -29,11 +29,11 @@ const DEMO_DATA = {
   prediction_stats:{ total:1384, avg_latency_ms:98.6 },
   model_health:{
     fold_metrics:[
-      {roc_auc:0.914,precision:0.826,recall:0.776,f1:0.800},
-      {roc_auc:0.921,precision:0.839,recall:0.789,f1:0.813},
-      {roc_auc:0.909,precision:0.821,recall:0.769,f1:0.794},
-      {roc_auc:0.918,precision:0.835,recall:0.783,f1:0.808},
-      {roc_auc:0.920,precision:0.840,recall:0.790,f1:0.814},
+      {roc_auc:0.91611},
+      {roc_auc:0.9172},
+      {roc_auc:0.91656},
+      {roc_auc:0.91762},
+      {roc_auc:0.91498},
     ],
   },
 }

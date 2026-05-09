@@ -30,6 +30,16 @@ ChurnGuard is a **full-stack machine learning system** that predicts which telec
 
 ---
 
+## 🧭 Resume Highlights
+
+- **End-to-end ML system**: data prep → training → API → frontend dashboard
+- **Production focus**: typed FastAPI schemas, real-time logging, cold-start handling
+- **Explainability**: SHAP feature attributions per prediction
+- **Deployment-ready**: Docker, Render backend, Vercel frontend, CI-friendly tests
+- **Business framing**: actionable insights, risk tiers, and what-if simulator
+
+---
+
 ## 🏗️ System Architecture
 
 ```
@@ -94,10 +104,18 @@ model = XGBClassifier(
 | Metric | Score |
 |---|---|
 | ROC-AUC (OOF) | **0.916** |
-| Precision | 0.72 |
-| Recall | 0.78 |
-| F1 Score | 0.75 |
-| Accuracy | 0.81 |
+| Precision | 0.513 |
+| Recall | 0.923 |
+| F1 Score | 0.660 |
+| Accuracy | 0.786 |
+
+---
+
+## 🧠 Model Explainability
+
+SHAP summaries show which features push churn risk higher or lower across the dataset.
+
+![SHAP summary plot](backend/models/shap_summary.png)
 
 ---
 
@@ -125,19 +143,23 @@ Full interactive docs at `/docs` (Swagger UI).
   "churn_probability": 0.7823,
   "churn_prediction": true,
   "risk_tier": "High",
-  "shap_top_features": [
-    {"feature": "contract_risk", "value": 2.0, "importance": 0.342, "direction": "increases_churn"},
+  "shap_values": [
+    {"feature": "contract_risk", "value": 2.0, "shap_val": 0.342, "direction": "increases_churn"},
     ...
   ],
   "confidence": 0.941,
-  "latency_ms": 18.4
+  "latency_ms": 18.4,
+  "threshold_used": 0.38
 }
 ```
 
 ### `POST /whatif`
 ```json
-// Query params: overrides (e.g. ?Contract=Two+year)
-// Body: CustomerInput
+// Request
+{
+  "base": { "tenure": 24, "MonthlyCharges": 79.5, "TotalCharges": 1908.0, "Contract": "Month-to-month", ... },
+  "overrides": { "Contract": "Two year" }
+}
 
 // Response
 {
@@ -184,6 +206,14 @@ Liveness probe — returns model load status and runtime stats.
 - Python 3.10+
 - Node.js 18+
 
+### Docker Compose
+
+```bash
+docker-compose up --build
+```
+
+Backend at `http://localhost:8000` and frontend at `http://localhost:5173`.
+
 ### Backend
 
 ```bash
@@ -212,6 +242,21 @@ npm run dev
 ```
 
 Frontend at `http://localhost:5173`
+
+---
+
+## 🚢 Deployment
+
+### Backend (Render)
+- **Root directory**: `backend/`
+- **Build command**: `bash render-build.sh`
+- **Start command**: `uvicorn main:app --host 0.0.0.0 --port 8000`
+- **Environment**: `ALLOWED_ORIGINS=https://churnguard-ten.vercel.app`
+
+### Frontend (Vercel)
+- **Framework**: Vite
+- **Build**: `npm run build`
+- **Env var**: `VITE_API_URL=https://churnguard-api.onrender.com`
 
 ---
 
@@ -287,26 +332,6 @@ Test coverage includes: input validation, feature engineering correctness, endpo
 
 ---
 
-## 🌐 Deployment
-
-| Layer | Platform | Notes |
-|---|---|---|
-| Frontend | Vercel | Auto-deploy from `main` branch |
-| Backend | Render (free tier) | Cold start ~3s; upgrade to paid for always-on |
-| Models | Bundled with backend | 70MB pkl — consider S3 for large teams |
-
-**Environment variables needed on Render:**
-```
-ALLOWED_ORIGINS=https://churnguard-ten.vercel.app
-```
-
-**Environment variables needed on Vercel:**
-```
-VITE_API_URL=https://churnguard-api.onrender.com
-```
-
----
-
 ## 📈 What I Would Add Next
 
 - [ ] **SHAP TreeExplainer** — replace proxy importance with true Shapley values
@@ -316,6 +341,16 @@ VITE_API_URL=https://churnguard-api.onrender.com
 - [ ] **GitHub Actions CI** — lint + test on every PR
 - [ ] **Prometheus + Grafana** — real-time latency / throughput monitoring
 - [ ] **LightGBM stacking** — blend XGB ensemble with LGB for +0.5pp AUC
+
+---
+
+## ✅ Internship-Ready Checklist
+
+- Clear product narrative and measurable results
+- Realistic offline demo state for cold-starts
+- Reproducible setup (Docker + scripts)
+- Tests covering preprocessing and API schema behavior
+- Clean separation between training and serving code
 
 ---
 
