@@ -10,7 +10,7 @@ const BASE_URL =
 
 const axiosInstance = axios.create({
   baseURL: BASE_URL,
-  timeout: 30_000,
+  timeout: 60_000,
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -26,10 +26,14 @@ axiosInstance.interceptors.request.use((config) => {
 axiosInstance.interceptors.response.use(
   (res) => res,
   (err) => {
+    const isTimeout =
+      err.code === 'ECONNABORTED' ||
+      String(err.message || '').toLowerCase().includes('timeout')
     const msg =
       err.response?.data?.detail ||
-      err.message ||
-      'Unknown API error'
+      (isTimeout
+        ? 'API cold start in progress. Please retry in ~30-60s.'
+        : err.message || 'Unknown API error')
     return Promise.reject(new Error(msg))
   },
 )

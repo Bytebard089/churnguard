@@ -18,8 +18,28 @@ export default function PredictPage({ predictFn }) {
   const sampleApi  = useApi(getSample)
   const featApi    = useApi(getFeatures)
 
+  const isColdStartError = (msg) => /cold start|timeout/i.test(String(msg))
+  const coldStartActive = isColdStartError(featApi.error) || isColdStartError(sampleApi.error)
+
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+
+  async function retryRun(api, args, retries = 2, delayMs = 4000) {
+    let last = null
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await api.run(...args)
+      if (res) return res
+      last = api.error
+      if (attempt < retries && /cold start|timeout/i.test(String(last))) {
+        // eslint-disable-next-line no-await-in-loop
+        await sleep(delayMs)
+      }
+    }
+    return null
+  }
+
   async function loadFeatures() {
-    const defs = await featApi.run()
+    const defs = await retryRun(featApi, [])
     if (defs?.length) {
       setFields(defs)
       const defaults = {}
@@ -31,14 +51,14 @@ export default function PredictPage({ predictFn }) {
   useEffect(() => {
     async function init() {
       await loadFeatures()
-      const sample = await sampleApi.run()
+      const sample = await retryRun(sampleApi, [])
       if (sample) setValues(sample)
     }
     init()
   }, [])
 
   async function handlePredict() {
-    const res = await predictApi.run(values)
+    const res = await retryRun(predictApi, [values])
     if (res) setResult(res)
   }
 
@@ -71,8 +91,31 @@ export default function PredictPage({ predictFn }) {
           </Button>
         </div>
 
-        {featApi.loading ? (
-          <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}><Spinner /></div>
+        {featApi.loading || coldStartActive ? (
+          <div style={{ padding: '0.5rem 0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                  Warming up the API…
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  Free tier cold starts can take 30–60s. We will auto-retry.
+                </div>
+              </div>
+              <Button variant="secondary" size="sm" onClick={loadFeatures} loading={featApi.loading}>
+                <RefreshCw size={13} /> Retry now
+              </Button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.75rem', marginTop: '1rem' }}>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i}>
+                  <div className="skeleton" style={{ height: 10, width: '60%', marginBottom: '0.4rem' }} />
+                  <div className="skeleton" style={{ height: 34, width: '100%' }} />
+                </div>
+              ))}
+            </div>
+          </div>
         ) : featApi.error ? (
           <div style={{ padding: '1rem 0' }}>
             <ErrorBox message={`Failed to load form: ${featApi.error}`} />
@@ -85,7 +128,7 @@ export default function PredictPage({ predictFn }) {
         )}
 
         <div style={{ marginTop: '1.5rem', display: 'flex', gap: '0.75rem' }}>
-          <Button onClick={handlePredict} loading={predictApi.loading} size="lg" style={{ flex: 1 }}>
+          <Button onClick={handlePredict} loading={predictApi.loading} disabled={!fields.length || featApi.loading} size="lg" style={{ flex: 1 }}>
             <Zap size={16} />
             {predictApi.loading ? 'Running ensemble…' : 'Predict Churn'}
           </Button>
