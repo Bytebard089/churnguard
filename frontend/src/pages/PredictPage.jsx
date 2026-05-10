@@ -15,8 +15,8 @@ export default function PredictPage({ predictFn }) {
   const [copied, setCopied] = useState(false)
 
   const predictApi = useApi(predictCall)
-  const sampleApi  = useApi(getSample)
-  const featApi    = useApi(getFeatures)
+  const sampleApi = useApi(getSample)
+  const featApi = useApi(getFeatures)
 
   const isColdStartError = (msg) => /cold start|timeout/i.test(String(msg))
   const coldStartActive = isColdStartError(featApi.error) || isColdStartError(sampleApi.error)
@@ -75,8 +75,8 @@ export default function PredictPage({ predictFn }) {
 
   const riskBorderColor = result
     ? result.risk_tier === 'High' ? 'var(--risk-high)'
-    : result.risk_tier === 'Medium' ? 'var(--risk-med)'
-    : 'var(--risk-low)'
+      : result.risk_tier === 'Medium' ? 'var(--risk-med)'
+        : 'var(--risk-low)'
     : 'var(--border)'
 
   return (
@@ -99,7 +99,7 @@ export default function PredictPage({ predictFn }) {
                   Warming up the API…
                 </div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  Free tier cold starts can take 30–60s. We will auto-retry.
+                  Fetching form fields. This may take a few seconds.
                 </div>
               </div>
               <Button variant="secondary" size="sm" onClick={loadFeatures} loading={featApi.loading}>
