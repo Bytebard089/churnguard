@@ -1,4 +1,4 @@
-# 🛡️ ChurnGuard: Enterprise ML Customer Churn Prediction System
+# ChurnGuard: Customer Churn Prediction Project
 
 <div align="center">
   <img src="https://img.shields.io/badge/Status-Production-success?style=for-the-badge&logo=vercel" alt="Status" />
@@ -14,41 +14,41 @@
 
 <br />
 
-ChurnGuard is an end-to-end, full-stack **Machine Learning system** engineered to predict telecommunications customer churn. Designed with a focus on **MLOps best practices**, model interpretability, and high-performance serving, it bridges the gap between data science experimentation and production-ready applications. 
+ChurnGuard is a full-stack machine learning project built to predict telecommunications customer churn. The project explores model interpretability and serving predictions via a REST API.
 
-Achieving an **OOF ROC-AUC of 0.916** (top benchmark on the Kaggle Playground Series S6E3 dataset), ChurnGuard provides actionable, real-time risk assessments augmented with SHAP-based feature attributions.
-
----
-
-## 🚀 Key Features
-
-- **Real-Time Inference Engine**: Highly optimized FastAPI backend delivering sub-30ms latency for single-instance predictions.
-- **Batch Processing Pipeline**: Asynchronous bulk scoring capabilities handling up to 500 customers per request with robust error handling.
-- **Interactive "What-If" Simulator**: Decision-support tool allowing users to simulate risk deltas by tweaking customer features dynamically.
-- **Explainable AI (XAI)**: Integrated SHAP (SHapley Additive exPlanations) values for every prediction, offering transparent, feature-level risk attribution.
-- **Executive Analytics Dashboard**: Live metrics, model confidence intervals, and aggregate risk distributions visualized through React/Recharts.
-- **Production-Grade MLOps**: 5-Fold Stratified Ensembling to reduce variance, rigorous Pydantic schema validation, and complete CI-ready test coverage.
+The model achieves an OOF ROC-AUC of 0.916 on the Kaggle Playground Series S6E3 dataset, and the application provides actionable risk assessments with SHAP-based feature attributions.
 
 ---
 
-## 🏗️ System Architecture
+## Key Features
+
+- **Real-Time Inference**: FastAPI backend for single-instance predictions.
+- **Batch Processing**: Scoring capabilities for multiple customers per request.
+- **Interactive Simulator**: Tool to simulate risk changes by tweaking customer features.
+- **Explainable AI**: Integrated SHAP values for predictions, showing feature-level risk attribution.
+- **Analytics Dashboard**: Metrics and risk distributions visualized with React and Recharts.
+- **MLOps Features**: 5-Fold Stratified Ensembling, Pydantic schema validation, and test coverage.
+
+---
+
+## System Architecture
 
 ```mermaid
 graph TD
-    subgraph Frontend ["React Frontend (Vercel)"]
+    subgraph Frontend [React Frontend]
         UI[User Interface]
         DB[Analytics Dashboard]
         Sim[What-If Simulator]
         Batch[Batch Uploader]
     end
 
-    subgraph Backend ["FastAPI Backend (Render)"]
+    subgraph Backend [FastAPI Backend]
         API[REST API endpoints]
         Val[Pydantic Validation]
         ReqLogger[Request Logging & CORS]
     end
 
-    subgraph ML_Layer ["Machine Learning Core"]
+    subgraph ML_Layer [Machine Learning Core]
         Ensemble[5-Fold XGBoost Ensemble]
         Prep[Feature Engineering Pipeline]
         SHAP[Interpretability Engine]
@@ -69,54 +69,54 @@ graph TD
 
 ---
 
-## 🧠 Machine Learning Pipeline
+## Machine Learning Pipeline
 
 ### Data & Engineering
 - **Dataset**: Built on the [Kaggle Playground Series S6E3](https://www.kaggle.com/competitions/playground-series-s6e3) dataset.
-- **Advanced Feature Engineering**: Extracted 41 predictive features including domain-specific composite metrics:
+- **Feature Engineering**: Extracted predictive features including:
   - `risk_score`: Aggregation of categorical risk factors (contract type, auto-pay status, fiber optic usage).
   - `charge_contract_risk`: Interaction term between financial commitment and contract length.
-  - `ChargeDiff`: Discrepancy metric between `TotalCharges` and derived expected charges to capture behavioral payment patterns.
+  - `ChargeDiff`: Discrepancy metric between `TotalCharges` and expected charges.
 
 ### Modeling Strategy
-The core prediction engine utilizes a **Stratified 5-Fold Ensembled XGBoost Classifier**.
-- **Imbalance Handling**: Integrated `scale_pos_weight` (3.44) for native algorithmic correction of the minority class.
-- **Variance Reduction**: Independent training of folds ensures zero data leakage and robust out-of-fold (OOF) generalization.
-- **Hyperparameter Tuning**: Optimized with early stopping (`eval_metric='auc'`), structural regularization (`max_depth=6`), and stochastic sampling (`subsample=0.8`, `colsample_bytree=0.8`).
+The prediction model is a Stratified 5-Fold Ensembled XGBoost Classifier.
+- **Imbalance Handling**: Uses `scale_pos_weight` to handle the minority class.
+- **Variance Reduction**: Independent training of folds for out-of-fold generalization.
+- **Hyperparameter Tuning**: Tuned with early stopping, `max_depth=6`, and stochastic sampling.
 
 ### Evaluation Metrics
-| Metric | Score | Note |
-|---|---|---|
-| **ROC-AUC (OOF)** | **0.916** | Primary evaluation metric |
-| Precision | 0.513 | Balanced for business context |
-| Recall | 0.923 | High sensitivity to capture churners |
-| F1 Score | 0.660 | Harmonic mean |
-| Accuracy | 0.786 | Global correctness |
+| Metric | Score |
+|---|---|
+| **ROC-AUC (OOF)** | **0.916** |
+| Precision | 0.513 |
+| Recall | 0.923 |
+| F1 Score | 0.660 |
+| Accuracy | 0.786 |
 
 ---
 
-## 🔍 Explainability & Interpretability
+## Explainability & Interpretability
 
-Black-box models are insufficient for actionable business insights. ChurnGuard incorporates local and global interpretability methodologies.
+ChurnGuard incorporates global and local interpretability methods.
 
-- **Global Feature Importance**: Identifies macro-trends in customer behavior across the dataset.
-- **Local SHAP Explanations**: Every `/predict` payload returns exact feature attributions, quantifying how much variables like `tenure` or `MonthlyCharges` contributed to that specific user's risk score.
+- **Global Feature Importance**: Shows trends in customer behavior across the dataset.
+- **Local SHAP Explanations**: The `/predict` endpoint returns feature attributions, quantifying how much variables like `tenure` or `MonthlyCharges` contributed to a user's risk score.
 
 ![SHAP Summary Plot](backend/models/shap_summary.png)
 
 ---
 
-## 🔌 API Reference
+## API Reference
 
-The backend exposes a highly typed REST API via FastAPI. Complete OpenAPI (Swagger) documentation is available at `/docs` when running the server.
+The backend exposes a REST API via FastAPI. OpenAPI documentation is available at `/docs` when running the server.
 
 ### Core Endpoints
 
-- `POST /predict`: Single instance scoring with SHAP values and model confidence.
+- `POST /predict`: Single instance scoring with SHAP values.
 - `POST /whatif`: Comparative analysis between base and mutated customer states.
-- `POST /batch`: High-throughput scoring for multiple records.
-- `GET /dashboard`: Aggregated model telemetry, feature importance mappings, and statistical distributions.
-- `GET /health`: Kubernetes-ready readiness and liveness probe.
+- `POST /batch`: Scoring for multiple records.
+- `GET /dashboard`: Aggregated model statistics and distributions.
+- `GET /health`: Readiness and liveness probe.
 
 **Example `POST /predict` Response:**
 ```json
@@ -139,7 +139,7 @@ The backend exposes a highly typed REST API via FastAPI. Complete OpenAPI (Swagg
 
 ---
 
-## 💻 Local Development
+## Local Development
 
 ### Prerequisites
 - Docker & Docker Compose
@@ -175,8 +175,9 @@ npm run dev
 
 ---
 
-## 🧪 Testing & CI/CD
-Rigorous automated testing ensures pipeline stability. Tests cover input validation boundaries, engineered feature accuracy, and batch endpoint stress limits.
+## Testing
+
+Automated tests cover input validation and feature accuracy.
 
 ```bash
 cd backend
@@ -186,24 +187,10 @@ pytest tests/ -v
 
 ---
 
-## 🔮 Roadmap & Future Architecture
-- [ ] **True SHAP TreeExplainer**: Transitioning from proxy feature importance to exact Shapley value computation in production.
-- [ ] **Data Drift Monitoring**: Integration with Evidently AI to track covariant shift and decay in feature distributions.
-- [ ] **Model Registry**: MLflow implementation for lifecycle management and A/B rollout testing.
-- [ ] **Data Persistence**: PostgreSQL integration for historical inference logging to enable automated continuous retraining loops.
+## Future Improvements
+- [ ] Implement true SHAP TreeExplainer instead of proxy feature importance.
+- [ ] Add data drift monitoring to track changes in feature distributions.
+- [ ] Integrate a model registry for tracking experiments.
 
 ---
 
-## 👤 Author
-
-**Isha Tomar**
-*Machine Learning Engineer*
-
-[LinkedIn](https://www.linkedin.com/in/isha-tomar-4028a0307/) • [GitHub](https://github.com/Bytebard089)
-
-*Designed with a passion for scalable AI architectures and actionable MLOps.*
-
----
-<div align="center">
-  <i>If you found this architecture reference helpful, please consider starring the repository ⭐</i>
-</div>
