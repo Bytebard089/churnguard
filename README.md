@@ -35,20 +35,20 @@ Achieving an **OOF ROC-AUC of 0.916** (top benchmark on the Kaggle Playground Se
 
 ```mermaid
 graph TD
-    subgraph Frontend [React Frontend (Vercel)]
+    subgraph Frontend ["React Frontend (Vercel)"]
         UI[User Interface]
         DB[Analytics Dashboard]
         Sim[What-If Simulator]
         Batch[Batch Uploader]
     end
 
-    subgraph Backend [FastAPI Backend (Render)]
+    subgraph Backend ["FastAPI Backend (Render)"]
         API[REST API endpoints]
         Val[Pydantic Validation]
         ReqLogger[Request Logging & CORS]
     end
 
-    subgraph ML_Layer [Machine Learning Core]
+    subgraph ML_Layer ["Machine Learning Core"]
         Ensemble[5-Fold XGBoost Ensemble]
         Prep[Feature Engineering Pipeline]
         SHAP[Interpretability Engine]
