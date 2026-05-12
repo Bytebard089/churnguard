@@ -212,20 +212,13 @@ export default function WhatIfPage() {
     })
   }, [])
 
+  // Clear results when overrides reset to original values
   useEffect(() => {
     if (!baseCustomer) return
     const changed = Object.keys(overrides).some(
       (k) => overrides[k] !== baseCustomer?.[k]
     )
-    if (!changed) {
-      setResult(null)
-      return
-    }
-    const t = setTimeout(async () => {
-      const res = await whatifApi.run(baseCustomer, overrides)
-      if (res) setResult(res)
-    }, 400)
-    return () => clearTimeout(t)
+    if (!changed) setResult(null)
   }, [baseCustomer, overrides])
 
   function handleOverride(field, value) {

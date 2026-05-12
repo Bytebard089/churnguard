@@ -50,9 +50,9 @@ function ProbabilityGauge({ probability }) {
 function ShapChart({ shapValues }) {
   if (!shapValues?.length) return null
   const data = [...shapValues]
-    .sort((a,b) => Math.abs(b.impact)-Math.abs(a.impact))
+    .sort((a,b) => Math.abs(b.shap_val ?? b.impact ?? 0)-Math.abs(a.shap_val ?? a.impact ?? 0))
     .slice(0,8)
-    .map(sv => ({ name:sv.feature, value:sv.impact, raw:sv.raw_value??sv.value??'' }))
+    .map(sv => ({ name:sv.feature, value:sv.shap_val ?? sv.impact ?? 0, raw:sv.value??sv.raw_value??'' }))
 
   return (
     <ResponsiveContainer width="100%" height={220}>

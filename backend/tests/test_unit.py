@@ -437,3 +437,51 @@ class TestMetadataSchema:
         loaded = json.loads(dumped)
         assert loaded["oof_auc"] == pytest.approx(0.9164)
         assert loaded["optimal_threshold"] == pytest.approx(0.38)
+
+
+# ══════════════════════════════════════════════
+# engineer_for_serving() end-to-end
+# ══════════════════════════════════════════════
+
+class TestEngineerForServing:
+    """Test the full preprocess → engineer → dummies → align pipeline."""
+
+    def _feature_cols(self):
+        """Load real feature columns if available, else use a small mock."""
+        path = Path(__file__).parent.parent / "models" / "feature_columns.json"
+        if path.exists():
+            return json.loads(path.read_text())
+        return ["tenure", "MonthlyCharges", "TotalCharges", "contract_risk",
+                "service_count", "autopay", "gender_Male", "Partner_Yes"]
+
+    def test_returns_correct_columns(self):
+        from core.features import engineer_for_serving
+        cols = self._feature_cols()
+        df = engineer_for_serving(make_df(), cols)
+        assert list(df.columns) == cols
+
+    def test_output_is_all_float(self):
+        from core.features import engineer_for_serving
+        cols = self._feature_cols()
+        df = engineer_for_serving(make_df(), cols)
+        for c in df.columns:
+            assert pd.api.types.is_float_dtype(df[c].dtype), f"{c} is {df[c].dtype}"
+
+    def test_no_nans_in_output(self):
+        from core.features import engineer_for_serving
+        cols = self._feature_cols()
+        df = engineer_for_serving(make_df(), cols)
+        assert df.isna().sum().sum() == 0, "NaN values in serving output"
+
+    def test_single_row_shape(self):
+        from core.features import engineer_for_serving
+        cols = self._feature_cols()
+        df = engineer_for_serving(make_df(), cols)
+        assert df.shape == (1, len(cols))
+
+    def test_senior_citizen_string_input(self):
+        """API sends SeniorCitizen as 'Yes'/'No' string."""
+        from core.features import engineer_for_serving
+        cols = self._feature_cols()
+        df = engineer_for_serving(make_df(SeniorCitizen="Yes"), cols)
+        assert df.shape[0] == 1

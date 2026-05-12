@@ -1,0 +1,15 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+predictions.db
+.ruff_cache/
+.pytest_cache/
+.git/
+.github/
+tests/
+test_api.py
+*.log
+.DS_Store

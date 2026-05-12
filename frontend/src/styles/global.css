@@ -184,3 +184,26 @@ input:disabled, select:disabled, textarea:disabled {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+/* ─── responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  :root { --nav-width: 200px; }
+  .page-content { padding: 1.5rem 1.5rem; }
+}
+
+@media (max-width: 768px) {
+  :root { --nav-width: 0px; }
+  .main-nav {
+    width: 100%;
+    height: auto;
+    position: relative;
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .page-content {
+    margin-left: 0;
+    padding: 1rem;
+  }
+}

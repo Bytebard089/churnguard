@@ -242,13 +242,14 @@ class CustomerInput(BaseModel):
 
 
 class PredictionResponse(BaseModel):
-    churn_probability: float
-    churn_prediction:  bool
-    risk_tier:         str
-    shap_values:       list[dict]
-    confidence:        float
-    latency_ms:        float
-    threshold_used:    float     # Fix 4: transparency
+    churn_probability:  float
+    churn_prediction:   bool
+    risk_tier:          str
+    shap_values:        list[dict]
+    confidence:         float
+    latency_ms:         float
+    threshold_used:     float     # Fix 4: transparency
+    fold_probabilities: list[float] = []  # per-fold transparency
 
 
 class WhatIfRequest(BaseModel):
@@ -289,7 +290,10 @@ def _predict_proba(feat_df: pd.DataFrame) -> np.ndarray:
 
 
 def _risk_tier(p: float) -> str:
-    return "High" if p >= 0.65 else "Medium" if p >= 0.35 else "Low"
+    """Anchor risk tiers around the optimal threshold for consistency."""
+    high_cut = max(_threshold + 0.25, 0.60)
+    low_cut  = max(_threshold - 0.03, 0.30)
+    return "High" if p >= high_cut else "Medium" if p >= low_cut else "Low"
 
 
 def _build_explainer() -> Any:
@@ -314,12 +318,21 @@ def _gain_fallback(n: int) -> list[dict]:
 
 
 def _get_shap(feat_df: pd.DataFrame, n: int = 8) -> list[dict]:
-    """Fix 2: real per-prediction Shapley values from shap.TreeExplainer."""
+    """Fix 2: real per-prediction Shapley values from shap.TreeExplainer.
+    Uses the modern explainer() call that returns an Explanation object,
+    with fallback for older shap versions."""
     if not _shap_enabled:
         return _gain_fallback(n)
     try:
         explainer = _build_explainer()
-        sv   = explainer.shap_values(feat_df)[0]   # shape: (n_features,)
+        # Modern shap API: explainer() returns Explanation object
+        try:
+            explanation = explainer(feat_df)
+            sv = explanation.values[0]  # first sample, shape: (n_features,)
+        except TypeError:
+            # Fallback for older shap versions
+            raw_sv = explainer.shap_values(feat_df)
+            sv = raw_sv[0] if isinstance(raw_sv, list) else raw_sv[0]
         out  = [
             {"feature":   name.replace("_"," "),
              "shap_val":  round(float(v), 5),
@@ -338,7 +351,7 @@ def _get_shap(feat_df: pd.DataFrame, n: int = 8) -> list[dict]:
 @app.get("/health", tags=["ops"])
 def health_check():
     db = _db_stats()
-    return {"status":"healthy","model_ready":len(_models)>0,"models_loaded":len(_models),
+    return {"status":"ok","model_ready":len(_models)>0,"models_loaded":len(_models),
             "features":len(_feature_cols),"oof_auc":_metadata.get("oof_auc"),
             "pr_auc":_metadata.get("pr_auc"),"optimal_threshold":_threshold,
             "total_predictions":db["total"]}
@@ -537,12 +550,14 @@ def predict(customer: CustomerInput):
         tier       = _risk_tier(prob)
         shap_out   = _get_shap(feat_df)
         latency_ms = (time.perf_counter() - t0) * 1000
+        fold_probs = [round(float(p), 4) for p in fold_preds.flatten()]
         _log_prediction(prob, prob >= _threshold, tier, latency_ms, cd)  # Fix 3
         log.info("predict → %.3f (%s)  threshold=%.2f  %.1fms", prob, tier, _threshold, latency_ms)
         return PredictionResponse(
             churn_probability=round(prob,4), churn_prediction=prob>=_threshold,  # Fix 4
             risk_tier=tier, shap_values=shap_out, confidence=round(confidence,4),
-            latency_ms=round(latency_ms,2), threshold_used=_threshold)
+            latency_ms=round(latency_ms,2), threshold_used=_threshold,
+            fold_probabilities=fold_probs)
     except Exception as e:
         log.error("predict error: %s\n%s", e, traceback.format_exc())
         raise HTTPException(500, str(e))
@@ -628,6 +643,7 @@ def dashboard():
                 "total":db["total"],"avg_latency_ms":db["avg_latency_ms"],
                 "avg_churn_prob":db["avg_churn_prob"],"recent":db["recent"],
             },
+            "confusion_matrix": _metadata.get("confusion_matrix", {}),
             "model_health": {
                 "status":"healthy","n_folds":_metadata.get("n_folds",5),
                 "fold_metrics":_metadata.get("fold_metrics",[]),

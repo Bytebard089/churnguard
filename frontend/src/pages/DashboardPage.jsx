@@ -77,26 +77,28 @@ function MetricBar({ label, value, max=1, color }) {
   )
 }
 
-// Confusion matrix mock
-function ConfusionMatrix() {
+// Confusion matrix — dynamic from API
+function ConfusionMatrix({ cm }) {
+  const tp = cm?.tp ?? 0, fp = cm?.fp ?? 0, fn = cm?.fn ?? 0, tn = cm?.tn ?? 0
+  const total = tp + fp + fn + tn
   const cells = [
-    { label:'True Neg', value:1124, color:'var(--risk-low)',   desc:'Correctly retained' },
-    { label:'False Pos', value:142,  color:'var(--risk-med)',  desc:'Wrongly flagged' },
-    { label:'False Neg', value:118,  color:'var(--risk-high)', desc:'Missed churners' },
-    { label:'True Pos',  value:520,  color:'var(--risk-low)',  desc:'Correctly flagged' },
+    { label:'True Neg', value:tn, color:'var(--risk-low)',   desc:'Correctly retained' },
+    { label:'False Pos', value:fp,  color:'var(--risk-med)',  desc:'Wrongly flagged' },
+    { label:'False Neg', value:fn,  color:'var(--risk-high)', desc:'Missed churners' },
+    { label:'True Pos',  value:tp,  color:'var(--risk-low)',  desc:'Correctly flagged' },
   ]
   return (
     <div>
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0.5rem', marginTop:'0.5rem' }}>
         {cells.map(c => (
           <div key={c.label} style={{ background:'var(--bg-elevated)', border:`1px solid ${c.color}40`, borderRadius:'var(--radius-md)', padding:'0.75rem', textAlign:'center' }}>
-            <div style={{ fontFamily:'var(--font-mono)', fontSize:'1.3rem', fontWeight:800, color:c.color }}>{c.value}</div>
+            <div style={{ fontFamily:'var(--font-mono)', fontSize:'1.3rem', fontWeight:800, color:c.color }}>{c.value.toLocaleString()}</div>
             <div style={{ fontSize:'0.7rem', fontWeight:700, color:c.color, marginTop:'0.15rem' }}>{c.label}</div>
             <div style={{ fontSize:'0.65rem', color:'var(--text-muted)', marginTop:'0.1rem' }}>{c.desc}</div>
           </div>
         ))}
       </div>
-      <div style={{ fontSize:'0.7rem', color:'var(--text-muted)', marginTop:'0.625rem', textAlign:'center' }}>Test set · n=1,904 · threshold=0.5</div>
+      <div style={{ fontSize:'0.7rem', color:'var(--text-muted)', marginTop:'0.625rem', textAlign:'center' }}>OOF validation · n={total.toLocaleString()} · threshold={cm?.threshold ?? '0.38'}</div>
     </div>
   )
 }
@@ -190,8 +192,8 @@ export default function DashboardPage({ predictionHistory = [] }) {
     </div>
   )
 
-  const { model_metrics, risk_distribution, feature_importance, prediction_stats, model_health } = data
-  const totalPreds = (prediction_stats.total||0) + predictionHistory.length
+  const { model_metrics, risk_distribution, feature_importance, prediction_stats, model_health, confusion_matrix } = data
+  const totalPreds = (prediction_stats?.total||0) + predictionHistory.length
 
   const pieData = [
     {name:'High Risk',  value:risk_distribution.high,   color:COLORS.high},
@@ -236,10 +238,10 @@ export default function DashboardPage({ predictionHistory = [] }) {
 
       {/* KPIs */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'1rem' }}>
-        <KpiCard icon={Brain}        label="OOF ROC-AUC"        value={fmtPct(model_metrics.roc_auc)}              sub="5-fold cross-validation"          color={COLORS.accent}  trend={2.1} />
-        <KpiCard icon={Zap}          label="Avg Latency"         value={fmtMs(prediction_stats.avg_latency_ms)}     sub="ensemble inference"               color={COLORS.low}               />
+        <KpiCard icon={Brain}        label="OOF ROC-AUC"        value={fmtPctSafe(model_metrics?.roc_auc)}              sub="5-fold cross-validation"          color={COLORS.accent}  trend={2.1} />
+        <KpiCard icon={Zap}          label="Avg Latency"         value={fmtMs(prediction_stats?.avg_latency_ms ?? 0)}     sub="ensemble inference"               color={COLORS.low}               />
         <KpiCard icon={Users}        label="Total Predictions"   value={totalPreds.toLocaleString()}                sub={`+${predictionHistory.length} this session`} color={COLORS.purple} />
-        <KpiCard icon={TrendingDown} label="High Risk Rate"      value={`${risk_distribution.high_pct.toFixed(1)}%`} sub="of scored population"           color={COLORS.high}              />
+        <KpiCard icon={TrendingDown} label="High Risk Rate"      value={`${(risk_distribution?.high_pct ?? 0).toFixed(1)}%`} sub="of scored population"           color={COLORS.high}              />
       </div>
 
       {/* Session live panel */}
@@ -315,7 +317,7 @@ export default function DashboardPage({ predictionHistory = [] }) {
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'1.5rem' }}>
         <Card>
           <SectionTitle sub="Model predictions vs ground truth">Confusion Matrix</SectionTitle>
-          <ConfusionMatrix />
+          <ConfusionMatrix cm={confusion_matrix} />
         </Card>
         <Card>
           <SectionTitle sub="Derived from feature analysis">Business Insights</SectionTitle>

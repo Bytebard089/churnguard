@@ -34,6 +34,7 @@ export default function BatchPage() {
   const [summary, setSummary] = useState(null)
   const [results, setResults] = useState([])
   const [dragOver,setDragOver]= useState(false)
+  const [rowCount,setRowCount]= useState(0)
   const fileRef = useRef()
   const batchApi = useApi(batchPredict)
 
@@ -43,6 +44,7 @@ export default function BatchPage() {
     const text = await f.text()
     const rows = parseCsv(text)
     setPreview(rows.slice(0,3))
+    setRowCount(rows.length)
   }
 
   function handleDrop(e) {
@@ -65,7 +67,7 @@ export default function BatchPage() {
   }
 
   function clearFile() {
-    setFile(null); setPreview([]); setDone(false); setSummary(null); setResults([])
+    setFile(null); setPreview([]); setDone(false); setSummary(null); setResults([]); setRowCount(0)
     if(fileRef.current) fileRef.current.value=''
   }
 
@@ -142,7 +144,7 @@ export default function BatchPage() {
 
         <div style={{ display:'flex', gap:'0.75rem', alignItems:'center' }}>
           <Button onClick={handleRun} loading={batchApi.loading} disabled={!file} size="lg" style={{ flex:1 }}>
-            {batchApi.loading ? <><Spinner size={16} /> Processing…</> : <><UploadCloud size={16} /> Run Batch ({file ? '~' : '0'} rows)</>}
+            {batchApi.loading ? <><Spinner size={16} /> Processing…</> : <><UploadCloud size={16} /> Run Batch ({rowCount} rows)</>}
           </Button>
           {file && <Button variant="ghost" onClick={clearFile} size="lg"><X size={16} /> Clear</Button>}
         </div>

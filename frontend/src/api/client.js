@@ -80,15 +80,6 @@ export async function whatif(base, overrides) {
 }
 
 /**
- * POST /whatif with overrides in request body (alternative approach).
- * Used when overrides object is complex.
- */
-export async function whatifPost(base, overrides) {
-  const { data } = await axiosInstance.post('/whatif', { base, overrides })
-  return data
-}
-
-/**
  * Score a batch of customers.
  * @param {Object[]} customers Array of CustomerInput objects
  * @returns {Promise<Object>} BatchResponse
